@@ -25,7 +25,7 @@ test("dialog traps focus, closes with Escape and returns focus", async ({
 
   const focusInside = await page.evaluate(() => {
     const element = document.querySelector("dialog[open]");
-    return element !== null && element.contains(document.activeElement);
+    return element?.contains(document.activeElement) ?? false;
   });
   expect(focusInside).toBe(true);
 
@@ -38,9 +38,10 @@ test("dropdown menu selects an item and toasts", async ({ page }) => {
   await page.getByRole("button", { name: "Insert" }).click();
   const menu = page.getByRole("menu");
   await expect(menu).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Insert" }),
-  ).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("button", { name: "Insert" })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
 
   await page.getByRole("menuitem", { name: "Table" }).click();
   await expect(menu).toBeHidden();
@@ -49,9 +50,7 @@ test("dropdown menu selects an item and toasts", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("settings sheet opens and closes on backdrop click", async ({
-  page,
-}) => {
+test("settings sheet opens and closes on backdrop click", async ({ page }) => {
   await page.getByRole("button", { name: "Open settings" }).click();
   const dialog = page.locator("dialog[open]");
   await expect(dialog).toBeVisible();
@@ -63,20 +62,14 @@ test("settings sheet opens and closes on backdrop click", async ({
   await expect(dialog).toBeHidden();
 });
 
-test("command palette filters and selects via keyboard", async ({
-  page,
-}) => {
+test("command palette filters and selects via keyboard", async ({ page }) => {
   const input = page.getByPlaceholder("Search fonts…");
   await input.fill("serif");
   await expect(page.getByRole("option", { name: "Serif" })).toBeVisible();
-  await expect(
-    page.getByRole("option", { name: "Monospace" }),
-  ).toBeHidden();
+  await expect(page.getByRole("option", { name: "Monospace" })).toBeHidden();
 
   await input.fill("");
-  await expect(
-    page.getByRole("option", { name: "Monospace" }),
-  ).toBeVisible();
+  await expect(page.getByRole("option", { name: "Monospace" })).toBeVisible();
   await input.press("ArrowDown");
   await input.press("Enter");
   await expect(
@@ -89,9 +82,7 @@ test("theme toggle switches dark mode and persists", async ({ page }) => {
   await toggle.click();
   await expect
     .poll(() =>
-      page.evaluate(() =>
-        document.documentElement.classList.contains("dark"),
-      ),
+      page.evaluate(() => document.documentElement.classList.contains("dark")),
     )
     .toBe(true);
 
@@ -101,14 +92,10 @@ test("theme toggle switches dark mode and persists", async ({ page }) => {
   );
   expect(stillDark).toBe(true);
 
-  await page
-    .getByRole("button", { name: /switch to light/i })
-    .click();
+  await page.getByRole("button", { name: /switch to light/i }).click();
   await expect
     .poll(() =>
-      page.evaluate(() =>
-        document.documentElement.classList.contains("dark"),
-      ),
+      page.evaluate(() => document.documentElement.classList.contains("dark")),
     )
     .toBe(false);
 });

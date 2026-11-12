@@ -37,10 +37,7 @@ test("loads online, then works offline after reload", async ({
     .toBe("activated");
 
   // Installability basics: manifest + every icon resolves while online.
-  const manifestHref = await page.getAttribute(
-    'link[rel="manifest"]',
-    "href",
-  );
+  const manifestHref = await page.getAttribute('link[rel="manifest"]', "href");
   expect(manifestHref).toBeTruthy();
   const manifestUrl = new URL(manifestHref ?? "", page.url()).toString();
   const manifestResponse = await page.request.get(manifestUrl);
@@ -57,9 +54,7 @@ test("loads online, then works offline after reload", async ({
   const sizes = manifest.icons.map((icon) => icon.sizes);
   expect(sizes).toContain("192x192");
   expect(sizes).toContain("512x512");
-  expect(
-    manifest.icons.some((icon) => icon.purpose === "maskable"),
-  ).toBe(true);
+  expect(manifest.icons.some((icon) => icon.purpose === "maskable")).toBe(true);
   for (const icon of manifest.icons) {
     const response = await page.request.get(
       new URL(icon.src, manifestUrl).toString(),
