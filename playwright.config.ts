@@ -1,7 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Phase 1 adds offline reload, install, export and table coverage on top of
-// this Chromium + Android-viewport project.
+// Offline tests need the real service worker, which only exists in a
+// production build served by `vite preview` — never the dev server, and
+// never a stale dist, so the webServer always rebuilds first.
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
@@ -16,8 +17,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev",
+    command: "npm run build && npm run preview",
     url: "http://127.0.0.1:5173",
-    reuseExistingServer: true,
+    reuseExistingServer: false,
+    timeout: 180 * 1000,
   },
 });
