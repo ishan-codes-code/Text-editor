@@ -87,10 +87,12 @@ test("theme toggle switches dark mode and persists", async ({ page }) => {
     .toBe(true);
 
   await page.reload();
-  const stillDark = await page.evaluate(() =>
-    document.documentElement.classList.contains("dark"),
-  );
-  expect(stillDark).toBe(true);
+  // Poll: restoration must survive reload even if the app is still mounting.
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.classList.contains("dark")),
+    )
+    .toBe(true);
 
   await page.getByRole("button", { name: /switch to light/i }).click();
   await expect
