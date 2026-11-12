@@ -1,3 +1,4 @@
+import type { AnyExtension } from "@tiptap/core";
 import { Blockquote } from "@tiptap/extension-blockquote";
 import { Bold } from "@tiptap/extension-bold";
 import { BulletList } from "@tiptap/extension-bullet-list";
@@ -24,7 +25,6 @@ import { Text } from "@tiptap/extension-text";
 import { TextAlign } from "@tiptap/extension-text-align";
 import { FontSize, LineHeight, TextStyle } from "@tiptap/extension-text-style";
 import { Underline } from "@tiptap/extension-underline";
-import type { AnyExtension } from "@tiptap/core";
 import { Indent } from "./indent";
 import { PageBreak } from "./pageBreak";
 import { AppShortcuts, type AppShortcutsOptions } from "./shortcuts";

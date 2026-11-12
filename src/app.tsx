@@ -1,56 +1,68 @@
+import type { Editor } from "@tiptap/core";
+import { FileText, Moon, RefreshCw, Settings, Sun } from "lucide-preact";
 import {
-  Bold,
-  Check,
-  Italic,
-  Moon,
-  Palette,
-  RefreshCw,
-  Settings,
-  Sun,
-  Underline,
-} from "lucide-preact";
-import { useEffect, useMemo, useState } from "react";
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { StatusBar } from "./components/StatusBar";
+import { Toolbar } from "./components/Toolbar";
 import { Button } from "./components/ui/button";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "./components/ui/command";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "./components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "./components/ui/dropdown-menu";
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "./components/ui/sheet";
 import { Toaster, toast } from "./components/ui/sonner";
 import { useTiptapEditor } from "./hooks/useTiptapEditor";
 import { ensurePersistentStorage, initPwa } from "./pwa";
+import {
+  Autosave,
+  acquireDocLock,
+  backupFileName,
+  createBackup,
+  createDoc,
+  type DocListItem,
+  type DocLock,
+  deleteDoc,
+  deliverBackup,
+  duplicateDoc,
+  getDoc,
+  getSetting,
+  listDocs,
+  maybeSnapshot,
+  recordBackupTime,
+  renameDoc,
+  restoreBackup,
+  type SaveState,
+  SETTINGS_KEYS,
+  saveDocContent,
+  searchDocs,
+  setSetting,
+} from "./storage";
+
+// Heavy Radix dialogs load on demand, never in the core chunk: this also
+// keeps Vitest's jsdom run (whose SSR externalizer bypasses the
+// preact/compat alias for Radix's CJS deps) from executing Radix trees.
+// Behavior is covered by the Playwright suite in real Chromium instead.
+const DocsSheet = lazy(() =>
+  import("./components/DocsSheet").then((module) => ({
+    default: module.DocsSheet,
+  })),
+);
+const SettingsSheet = lazy(() =>
+  import("./components/SettingsSheet").then((module) => ({
+    default: module.SettingsSheet,
+  })),
+);
+const LinkDialog = lazy(() =>
+  import("./components/LinkDialog").then((module) => ({
+    default: module.LinkDialog,
+  })),
+);
 
 const THEME_KEY = "editor:theme";
+const BACKUP_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+const ZOOM_OPTIONS = ["fit", "0.5", "0.75", "1", "1.25", "1.5", "2"];
 
 function currentTheme(): "light" | "dark" {
   if (typeof document === "undefined") return "light";
@@ -97,19 +109,224 @@ function ThemeToggle() {
   );
 }
 
-const FONT_OPTIONS = [
-  { value: "System default", keywords: "sans system" },
-  { value: "Serif", keywords: "times georgia" },
-  { value: "Monospace", keywords: "mono code" },
-  { value: "Kruti Dev (upload in phase 4)", keywords: "hindi kruti dev" },
-];
-
 export function App() {
-  const { mountRef, editor } = useTiptapEditor();
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [persisted, setPersisted] = useState<boolean | null>(null);
-  const [wordCount, setWordCount] = useState(0);
+  const [docs, setDocs] = useState<DocListItem[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [docQuery, setDocQuery] = useState("");
+  const [readOnly, setReadOnly] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>("saved");
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [words, setWords] = useState(0);
+  const [chars, setChars] = useState(0);
+  const [zoom, setZoom] = useState<string>("1");
+  const [keepColors, setKeepColors] = useState(false);
+  const [knownFamilies] = useState<string[]>([]);
+  const [lastBackup, setLastBackup] = useState<number | null>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreMode, setRestoreMode] = useState<"merge" | "replace">("merge");
+
   const pwa = useMemo(() => initPwa(), []);
+  const autosaveRef = useRef<Autosave | null>(null);
+  const lockRef = useRef<DocLock | null>(null);
+  const loadingRef = useRef(false);
+  const activeIdRef = useRef<string | null>(null);
+  const editorRef = useRef<Editor | null>(null);
+  const lastSnapshotCheckRef = useRef(0);
+  const backupFileRef = useRef<HTMLInputElement | null>(null);
+
+  const refreshDocs = useCallback(async () => {
+    const query = docQuery;
+    const items =
+      query.trim() === "" ? await listDocs() : await searchDocs(query);
+    setDocs(items);
+  }, [docQuery]);
+
+  const openDoc = useCallback(
+    async (id: string) => {
+      const editor = editorRef.current;
+      if (editor === null) return;
+      // Flush + release the previous document first: one transaction per
+      // save means a crash here cannot corrupt either document.
+      await autosaveRef.current?.flush();
+      autosaveRef.current?.dispose();
+      autosaveRef.current = null;
+      lockRef.current?.release();
+      lockRef.current = null;
+
+      const doc = await getDoc(id);
+      if (doc === undefined) return;
+      const lock = await acquireDocLock(id);
+      lockRef.current = lock;
+      activeIdRef.current = id;
+
+      loadingRef.current = true;
+      editor.commands.setContent(doc.content);
+      editor.setEditable(lock.held);
+      loadingRef.current = false;
+
+      const autosave = new Autosave(
+        async (json, text) => {
+          await saveDocContent(id, json, text);
+          setSavedAt(Date.now());
+          await refreshDocs();
+        },
+        { onStateChange: setSaveState },
+      );
+      autosaveRef.current = autosave;
+      setReadOnly(!lock.held);
+      setSaveState("saved");
+      setActiveId(id);
+      setWords(doc.wordCount);
+      setChars(editor.getText().length);
+      await setSetting(SETTINGS_KEYS.lastOpenedDoc, id);
+      await refreshDocs();
+    },
+    [refreshDocs],
+  );
+
+  const recount = useCallback((editor: Editor) => {
+    const text = editor.getText();
+    const trimmed = text.trim();
+    setWords(trimmed === "" ? 0 : trimmed.split(/\s+/).length);
+    setChars(text.length);
+  }, []);
+
+  const handleUpdate = useCallback(
+    (editor: Editor) => {
+      if (loadingRef.current) return;
+      recount(editor);
+      const id = activeIdRef.current;
+      if (id === null) return;
+      autosaveRef.current?.schedule(editor.getJSON(), editor.getText());
+      const now = Date.now();
+      if (now - lastSnapshotCheckRef.current > 60_000) {
+        lastSnapshotCheckRef.current = now;
+        void maybeSnapshot(id, editor.getJSON(), now);
+      }
+    },
+    [recount],
+  );
+
+  const openLinkDialog = useCallback(() => {
+    const editor = editorRef.current;
+    const attrs = editor?.getAttributes("link") as
+      | { href?: string }
+      | undefined;
+    setLinkUrl(attrs?.href ?? "");
+    setLinkOpen(true);
+  }, []);
+
+  const { mountRef, editor } = useTiptapEditor({
+    onUpdate: handleUpdate,
+    onOpenLink: openLinkDialog,
+    getKnownFamilies: () => knownFamilies,
+    getKeepColors: () => keepColors,
+  });
+
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+
+  // Boot: ensure at least one document, then open the last-opened one.
+  useEffect(() => {
+    if (editor === null) return;
+    let cancelled = false;
+    const boot = async () => {
+      const [lastOpened, storedZoom, storedColors, storedBackup] =
+        await Promise.all([
+          getSetting<string | null>(SETTINGS_KEYS.lastOpenedDoc, null),
+          getSetting<string>(SETTINGS_KEYS.zoom, "1"),
+          getSetting<boolean>(SETTINGS_KEYS.keepPastedColors, false),
+          getSetting<number | null>(SETTINGS_KEYS.lastBackup, null),
+        ]);
+      if (cancelled) return;
+      setZoom(storedZoom);
+      setKeepColors(storedColors);
+      setLastBackup(storedBackup);
+      let items = await listDocs();
+      if (items.length === 0) {
+        const doc = await createDoc("Untitled");
+        items = [
+          {
+            id: doc.id,
+            title: doc.title,
+            titleFont: doc.titleFont,
+            wordCount: doc.wordCount,
+            createdAt: doc.createdAt,
+            updatedAt: doc.updatedAt,
+          },
+        ];
+      }
+      setDocs(items);
+      const target =
+        items.some((item) => item.id === lastOpened) || lastOpened === null
+          ? (lastOpened ?? items[0]?.id)
+          : (items[0]?.id ?? null);
+      if (target !== undefined && target !== null) await openDoc(target);
+    };
+    void boot();
+    return () => {
+      cancelled = true;
+    };
+  }, [editor, openDoc]);
+
+  // Flush on unmount; release the Web Lock.
+  useEffect(
+    () => () => {
+      void autosaveRef.current?.flush();
+      lockRef.current?.release();
+    },
+    [],
+  );
+
+  // Forced saves: blur, hidden tab, pagehide (reload/close). The tab can be
+  // killed right after typing, so every path flushes the debounce window.
+  useEffect(() => {
+    const flush = () => {
+      void autosaveRef.current?.flush();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("blur", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("blur", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, []);
+
+  // Ctrl+S saves now (preventDefault always — never let the browser dialog
+  // steal the keystroke) and gives quiet feedback.
+  const flushNow = useCallback(async () => {
+    await autosaveRef.current?.flush();
+    if (activeIdRef.current !== null) {
+      toast("Saved", { description: "All changes are stored on this device." });
+    }
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "s"
+      ) {
+        event.preventDefault();
+        void flushNow();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [flushNow]);
 
   useEffect(
     () =>
@@ -125,25 +342,133 @@ export function App() {
       .catch(() => setPersisted(false));
   }, []);
 
+  // visualViewport fallback: the meta tag handles layout resizing; this
+  // only scrolls the caret back into view.
   useEffect(() => {
-    if (editor === null) return;
-    const recount = () => {
-      const words = editor.getText().trim().split(/\s+/).filter(Boolean);
-      setWordCount(editor.getText().trim() === "" ? 0 : words.length);
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const onResize = () => {
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.classList.contains("tiptap")) {
+        active.scrollIntoView({ block: "nearest" });
+      }
     };
-    recount();
-    editor.on("update", recount);
-    return () => {
-      editor.off("update", recount);
-    };
-  }, [editor]);
+    viewport.addEventListener("resize", onResize);
+    return () => viewport.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    void refreshDocs();
+  }, [refreshDocs]);
+
+  const handleNew = useCallback(async () => {
+    const doc = await createDoc("Untitled");
+    await refreshDocs();
+    await openDoc(doc.id);
+    setDocsOpen(false);
+  }, [openDoc, refreshDocs]);
+
+  const handleDelete = useCallback(
+    async (id: string) => {
+      const target = docs.find((doc) => doc.id === id);
+      if (
+        !window.confirm(`Delete "${target?.title ?? "document"}" permanently?`)
+      ) {
+        return;
+      }
+      if (id === activeIdRef.current) {
+        await autosaveRef.current?.flush();
+        autosaveRef.current?.dispose();
+        autosaveRef.current = null;
+        lockRef.current?.release();
+        lockRef.current = null;
+        activeIdRef.current = null;
+      }
+      await deleteDoc(id);
+      const items = await listDocs();
+      setDocs(items);
+      if (items.length === 0) {
+        const doc = await createDoc("Untitled");
+        await openDoc(doc.id);
+      } else if (id === activeId) {
+        await openDoc(items[0]?.id as string);
+      }
+    },
+    [activeId, docs, openDoc],
+  );
+
+  const handleBackup = useCallback(async () => {
+    try {
+      const blob = await createBackup({ includeSnapshots: true });
+      const filename = backupFileName();
+      await recordBackupTime();
+      setLastBackup(Date.now());
+      const via = await deliverBackup(blob, filename);
+      toast("Backup ready", {
+        description:
+          via === "share"
+            ? "Choose where to save your backup file."
+            : "Your backup file is downloading.",
+      });
+    } catch {
+      toast("Backup failed", {
+        description: "Try again; your documents are still safe.",
+      });
+    }
+  }, []);
+
+  const handleRestoreFile = useCallback(
+    async (file: File) => {
+      setRestoring(true);
+      try {
+        const { report } = await restoreBackup(file, restoreMode);
+        const items = await listDocs();
+        setDocs(items);
+        const current =
+          items.some((item) => item.id === activeIdRef.current) ||
+          activeIdRef.current === null
+            ? activeIdRef.current
+            : (items[0]?.id ?? null);
+        if (current !== null) await openDoc(current);
+        else if (items.length > 0) await openDoc(items[0]?.id as string);
+        toast("Restore complete", {
+          description: `${report.docsRestored} docs, ${report.fontsRestored} fonts, ${report.imagesRestored} images (${report.mode}). A pre-restore backup was taken first.`,
+        });
+      } catch (error) {
+        toast("Restore failed", {
+          description:
+            error instanceof Error
+              ? error.message
+              : "That file could not be restored.",
+        });
+      } finally {
+        setRestoring(false);
+      }
+    },
+    [openDoc, restoreMode],
+  );
+
+  const applyLink = useCallback(() => {
+    const current = editorRef.current;
+    const href = linkUrl.trim();
+    if (current !== null) {
+      if (href === "") current.chain().focus().unsetLink().run();
+      else current.chain().focus().setLink({ href }).run();
+    }
+    setLinkOpen(false);
+  }, [linkUrl]);
+
+  const backupStale =
+    lastBackup !== null && Date.now() - lastBackup > BACKUP_STALE_MS;
+  const neverBackedUp = lastBackup === null;
+  const zoomValue = zoom === "fit" ? undefined : Number(zoom);
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
       {updateAvailable && (
         <div
           role="alert"
-          className="flex items-center justify-center gap-3 bg-primary px-4 py-2 text-sm text-primary-foreground"
+          className="flex items-center justify-center gap-3 bg-primary px-4 py-2 text-sm text-primary-foreground print:hidden"
         >
           <span>Update available.</span>
           <button
@@ -161,189 +486,193 @@ export function App() {
           </button>
         </div>
       )}
-
-      <header className="sticky top-0 z-10 border-b bg-background/95">
-        <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-2">
-          <h1 className="text-base font-semibold">Offline text editor</h1>
-          <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
-            Phase 1 shell
+      {(backupStale || neverBackedUp) && (
+        <div
+          role="alert"
+          className="flex items-center justify-center gap-3 bg-secondary px-4 py-2 text-sm text-secondary-foreground print:hidden"
+        >
+          <span>
+            {neverBackedUp
+              ? "Back up your documents to keep them safe."
+              : "No backup for over 7 days — your documents live only on this device."}
           </span>
+          <button
+            type="button"
+            className="font-medium underline underline-offset-4"
+            onClick={() => void handleBackup()}
+          >
+            Back up now
+          </button>
+        </div>
+      )}
+      {readOnly && (
+        <div
+          role="alert"
+          className="flex items-center justify-center gap-2 bg-secondary px-4 py-2 text-sm text-secondary-foreground print:hidden"
+        >
+          <FileText className="size-4" />
+          <span>
+            Read-only — this document is open in another tab. Close the other
+            tab, then reopen here to edit.
+          </span>
+        </div>
+      )}
+
+      <header className="sticky top-0 z-10 border-b bg-background/95 print:hidden">
+        <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-2">
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label="Documents"
+            onClick={() => setDocsOpen(true)}
+          >
+            <FileText className="size-4" /> Docs
+          </Button>
+          <h1 className="truncate text-base font-semibold">
+            {docs.find((doc) => doc.id === activeId)?.title ??
+              "Offline text editor"}
+          </h1>
           <div className="ml-auto flex items-center gap-1">
+            <label className="sr-only" htmlFor="zoom-select">
+              Zoom
+            </label>
+            <select
+              id="zoom-select"
+              aria-label="Zoom"
+              value={zoom}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setZoom(value);
+                void setSetting(SETTINGS_KEYS.zoom, value);
+              }}
+              className="h-9 rounded-md border border-input bg-background px-1 text-sm"
+            >
+              {ZOOM_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option === "fit" ? "Fit" : `${Number(option) * 100}%`}
+                </option>
+              ))}
+            </select>
             <ThemeToggle />
-            <Sheet>
-              <SheetTrigger>
-                <Button variant="ghost" size="icon" aria-label="Open settings">
-                  <Settings />
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="right">
-                <SheetHeader>
-                  <SheetTitle>Settings</SheetTitle>
-                  <SheetDescription>
-                    Storage, appearance and backup live here from phase 3.
-                  </SheetDescription>
-                </SheetHeader>
-                <div className="mt-4 text-sm">
-                  <p>
-                    Persistent storage:{" "}
-                    <strong>
-                      {persisted === null
-                        ? "checking…"
-                        : persisted
-                          ? "granted"
-                          : "not granted — install the app and back up"}
-                    </strong>
-                  </p>
-                </div>
-                <div className="mt-4 flex justify-end">
-                  <SheetClose>
-                    <Button variant="outline">Close</Button>
-                  </SheetClose>
-                </div>
-              </SheetContent>
-            </Sheet>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Open settings"
+              onClick={() => setSettingsOpen(true)}
+            >
+              <Settings />
+            </Button>
           </div>
         </div>
 
         <div className="border-t">
-          <div className="mx-auto flex max-w-3xl items-center gap-1 overflow-x-auto px-4 py-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Bold (phase 2)"
-              onClick={() => toast("Bold lands in phase 2")}
-            >
-              <Bold />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Italic (phase 2)"
-              onClick={() => toast("Italic lands in phase 2")}
-            >
-              <Italic />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Underline (phase 2)"
-              onClick={() => toast("Underline lands in phase 2")}
-            >
-              <Underline />
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger>
-                <Button variant="outline" size="sm">
-                  Insert
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                <DropdownMenuLabel>Insert (phase 5)</DropdownMenuLabel>
-                <DropdownMenuItem
-                  onSelect={() => toast("Tables land in phase 5")}
-                >
-                  Table
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={() => toast("Images land in phase 5")}
-                >
-                  Image
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onSelect={() =>
-                    toast("Character palette lands in phase 4", {
-                      description: "Palette",
-                    })
-                  }
-                >
-                  <Palette className="size-4" /> Symbol
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Dialog>
-              <DialogTrigger>
-                <Button variant="outline" size="sm">
-                  About
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Offline text editor</DialogTitle>
-                  <DialogDescription>
-                    Installable PWA shell. The editor, storage and fonts arrive
-                    in phases 2–4.
-                  </DialogDescription>
-                </DialogHeader>
-                <DialogFooter>
-                  <DialogClose>
-                    <Button variant="outline">Close</Button>
-                  </DialogClose>
-                  <DialogClose>
-                    <Button
-                      onClick={() =>
-                        toast("Saved", {
-                          description: "Autosave lands in phase 3.",
-                        })
-                      }
-                    >
-                      <Check className="size-4" /> Got it
-                    </Button>
-                  </DialogClose>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+          <div className="mx-auto max-w-3xl">
+            <Toolbar
+              editor={editor}
+              onOpenLink={openLinkDialog}
+              onSave={() => void flushNow()}
+              saveLabel={
+                saveState === "saving"
+                  ? "Saving…"
+                  : saveState === "dirty"
+                    ? "Save*"
+                    : saveState === "error"
+                      ? "Retry"
+                      : "Saved"
+              }
+            />
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-4 py-6">
-        <section
-          aria-label="Font picker scaffold"
-          className="mb-6 rounded-lg border bg-card text-card-foreground"
-        >
-          <Command label="Font picker">
-            <CommandInput placeholder="Search fonts…" />
-            <CommandList>
-              <CommandGroup heading="Fonts">
-                {FONT_OPTIONS.map((font) => (
-                  <CommandItem
-                    key={font.value}
-                    value={font.value}
-                    keywords={font.keywords}
-                    onSelect={(value) =>
-                      toast(`Font: ${value}`, {
-                        description: "Custom fonts land in phase 4.",
-                      })
-                    }
-                  >
-                    {font.value}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-              <CommandEmpty>No fonts found.</CommandEmpty>
-            </CommandList>
-          </Command>
-        </section>
+      <main className="bg-muted/60 px-4 py-6 print:bg-white print:p-0">
+        <div className="mx-auto w-full max-w-[210mm]">
+          <section
+            aria-label="Editor"
+            className="rounded-sm bg-card px-6 py-8 text-card-foreground shadow-sm print:rounded-none print:shadow-none sm:px-10"
+            style={
+              zoomValue === undefined
+                ? undefined
+                : ({ zoom: zoomValue } as React.CSSProperties)
+            }
+          >
+            <div ref={mountRef} />
+          </section>
 
-        <section
-          aria-label="Editor"
-          className="rounded-lg border bg-card p-4 text-card-foreground shadow-sm"
-        >
-          <div ref={mountRef} />
-        </section>
-
-        <footer className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-          <span data-testid="word-count">{wordCount} words</span>
-          <span data-testid="persist-status">
+          <StatusBar
+            words={words}
+            chars={chars}
+            saveState={saveState}
+            savedAt={savedAt}
+            readOnly={readOnly}
+          />
+          <p data-testid="persist-status" className="sr-only">
             {persisted === null
               ? "Storage: checking…"
               : persisted
                 ? "Storage: persistent"
                 : "Storage: not persistent"}
-          </span>
-        </footer>
+          </p>
+        </div>
       </main>
+
+      {docsOpen && (
+        <Suspense fallback={null}>
+          <DocsSheet
+            open={docsOpen}
+            onOpenChange={setDocsOpen}
+            docs={docs}
+            activeId={activeId}
+            query={docQuery}
+            onQueryChange={(value) => void setDocQuery(value)}
+            onOpen={(id) => {
+              setDocsOpen(false);
+              void openDoc(id);
+            }}
+            onNew={() => void handleNew()}
+            onRename={(id, title) => {
+              void renameDoc(id, title).then(() => refreshDocs());
+            }}
+            onDuplicate={(id) => {
+              void duplicateDoc(id).then(() => refreshDocs());
+            }}
+            onDelete={(id) => void handleDelete(id)}
+          />
+        </Suspense>
+      )}
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsSheet
+            open={settingsOpen}
+            onOpenChange={setSettingsOpen}
+            persisted={persisted}
+            keepColors={keepColors}
+            onKeepColorsChange={(value) => {
+              setKeepColors(value);
+              void setSetting(SETTINGS_KEYS.keepPastedColors, value);
+            }}
+            lastBackup={lastBackup}
+            onBackup={() => void handleBackup()}
+            onRestoreClick={() => backupFileRef.current?.click()}
+            restoring={restoring}
+            restoreMode={restoreMode}
+            onRestoreModeChange={setRestoreMode}
+            backupFileRef={backupFileRef}
+            onRestoreFile={(file) => void handleRestoreFile(file)}
+          />
+        </Suspense>
+      )}
+      {linkOpen && (
+        <Suspense fallback={null}>
+          <LinkDialog
+            open={linkOpen}
+            onOpenChange={setLinkOpen}
+            url={linkUrl}
+            onUrlChange={setLinkUrl}
+            onApply={applyLink}
+          />
+        </Suspense>
+      )}
 
       <Toaster />
     </div>

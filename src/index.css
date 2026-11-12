@@ -83,14 +83,30 @@
   }
 }
 
-/* Bare phase-1 editor surface. Full page canvas lands in phase 2. */
+/* Page canvas: A4 sheet on a gray field. Manual page breaks print as page
+   breaks (PDF via print stylesheet embeds the loaded fonts). */
 .tiptap {
-  min-height: 12rem;
+  min-height: 24rem;
   outline: none;
 }
 
 .tiptap p {
   margin: 0;
+}
+
+.page-break {
+  margin: 1.5rem 0;
+  border-top: 2px dashed var(--border);
+  user-select: none;
+}
+
+@media print {
+  .page-break {
+    margin: 0;
+    border: none;
+    height: 0;
+    break-after: page;
+  }
 }
 
 /* Native dialog / popover surfaces share the card treatment. */

@@ -30,7 +30,7 @@ export const Indent = Extension.create({
               return level > 0 && level <= MAX_INDENT_LEVEL ? level : null;
             },
             renderHTML: (attributes) => {
-              const level = attributes["indent"] as number | null;
+              const level = (attributes as { indent?: number | null }).indent;
               if (typeof level !== "number" || level <= 0) return {};
               return { style: `margin-left: ${level * INDENT_STEP_EM}em` };
             },
@@ -46,15 +46,23 @@ export const Indent = Extension.create({
         () =>
         ({ chain, editor }) => {
           const type = editor.isActive("heading") ? "heading" : "paragraph";
-          const current = (editor.getAttributes(type)["indent"] ?? 0) as number;
+          const attrs = editor.getAttributes(type) as {
+            indent?: number | null;
+          };
+          const current = attrs.indent ?? 0;
           if (current >= MAX_INDENT_LEVEL) return false;
-          return chain().updateAttributes(type, { indent: current + 1 }).run();
+          return chain()
+            .updateAttributes(type, { indent: current + 1 })
+            .run();
         },
       outdent:
         () =>
         ({ chain, editor }) => {
           const type = editor.isActive("heading") ? "heading" : "paragraph";
-          const current = (editor.getAttributes(type)["indent"] ?? 0) as number;
+          const attrs = editor.getAttributes(type) as {
+            indent?: number | null;
+          };
+          const current = attrs.indent ?? 0;
           if (current <= 0) return false;
           const next = current - 1 === 0 ? null : current - 1;
           return chain().updateAttributes(type, { indent: next }).run();

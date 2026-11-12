@@ -59,15 +59,18 @@ describe("editor extensions", () => {
 
   it("indents and outdents within limits", () => {
     const editor = track();
+    const indentOf = () =>
+      (editor.getAttributes("paragraph") as { indent?: number | null })
+        .indent;
     expect(editor.commands.indent()).toBe(true);
-    expect(editor.getAttributes("paragraph")["indent"]).toBe(1);
+    expect(indentOf()).toBe(1);
     expect(editor.commands.indent()).toBe(true);
-    expect(editor.getAttributes("paragraph")["indent"]).toBe(2);
+    expect(indentOf()).toBe(2);
     expect(editor.commands.outdent()).toBe(true);
-    expect(editor.getAttributes("paragraph")["indent"]).toBe(1);
+    expect(indentOf()).toBe(1);
     expect(editor.getHTML()).toContain("margin-left: 2em");
     for (let i = 0; i < MAX_INDENT_LEVEL + 2; i++) editor.commands.indent();
-    expect(editor.getAttributes("paragraph")["indent"]).toBe(MAX_INDENT_LEVEL);
+    expect(indentOf()).toBe(MAX_INDENT_LEVEL);
   });
 
   it("inserts a page break node", () => {
@@ -149,7 +152,7 @@ describe("paste policy", () => {
     expect(foreign).not.toContain("font-size");
 
     const known = sanitizePastedHTML(
-      '<p style="font-family: \'Test Font\', serif; font-size: 20px">x</p>',
+      "<p style=\"font-family: 'Test Font', serif; font-size: 20px\">x</p>",
       { knownFamilies: ["test font"], keepColors: false },
     );
     expect(known).toContain("Test Font");
@@ -157,7 +160,7 @@ describe("paste policy", () => {
 
     // Known family later in the fallback stack still counts.
     const fallback = sanitizePastedHTML(
-      '<p style="font-family: Unknown, \'Test Font\'">x</p>',
+      "<p style=\"font-family: Unknown, 'Test Font'\">x</p>",
       { knownFamilies: ["test font"], keepColors: false },
     );
     expect(fallback).toContain("Test Font");
@@ -193,7 +196,7 @@ describe("paste policy", () => {
 
   it("unwraps foreign wrappers but keeps their text", () => {
     const out = sanitizePastedHTML(
-      '<div><span>hello</span></div><article><section>world</section></article>',
+      "<div><span>hello</span></div><article><section>world</section></article>",
       base,
     );
     expect(out).toContain("hello");

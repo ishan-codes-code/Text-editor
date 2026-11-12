@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import type { DialogHTMLAttributes, ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import {
   Dialog,
@@ -30,7 +30,7 @@ const sheetVariants = cva("", {
 });
 
 interface SheetContentProps
-  extends DialogHTMLAttributes<HTMLDialogElement>,
+  extends ComponentProps<typeof DialogContent>,
     VariantProps<typeof sheetVariants> {
   children: ReactNode;
 }
