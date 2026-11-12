@@ -1,0 +1,8 @@
+[
+  {
+    "name": "core JS",
+    "path": "dist/assets/*.js",
+    "limit": "300 kB",
+    "running": false
+  }
+]
