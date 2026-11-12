@@ -1,0 +1,40 @@
+# deps / build
+node_modules/
+dist/
+dist-ssr/
+coverage/
+*.local
+
+# playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# vite
+.vite/
+
+# env / OS
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+
+# editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Fonts: never commit real or uploaded fonts (Kruti Dev is commercial).
+# Only test fixtures are versioned; phase 4 adds an OFL-licensed TTF there.
+*.ttf
+*.otf
+*.woff
+*.woff2
+!tests/fixtures/*.ttf
+!tests/fixtures/*.otf
+!tests/fixtures/*.woff
+!tests/fixtures/*.woff2
+
+.claude/settings.json
