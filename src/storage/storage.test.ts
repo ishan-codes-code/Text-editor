@@ -115,11 +115,11 @@ describe("documents", () => {
     // The projection carries no content field at all.
     const rows = await db.docMeta.toArray();
     expect(rows).toHaveLength(1);
-    expect("content" in rows[0]!).toBe(false);
+    expect(rows[0] !== undefined && "content" in rows[0]).toBe(false);
     expect(rows[0]?.wordCount).toBe(1);
     const listed = await listDocs(db);
     expect(listed[0]?.title).toBe("Meta check");
-    expect("content" in (listed[0] as object)).toBe(false);
+    expect(listed[0] !== undefined && "content" in listed[0]).toBe(false);
   });
 
   it("duplicating a doc copies its images under new ids", async () => {
