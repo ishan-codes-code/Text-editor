@@ -143,10 +143,7 @@ export function App() {
 
   const refreshFonts = useCallback(async () => {
     setFonts(await listFonts());
-    lastCustomRef.current = await getSetting<string>(
-      LAST_CUSTOM_FONT_KEY,
-      "",
-    );
+    lastCustomRef.current = await getSetting<string>(LAST_CUSTOM_FONT_KEY, "");
   }, []);
 
   const refreshDocs = useCallback(async () => {
