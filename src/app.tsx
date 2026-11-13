@@ -139,9 +139,14 @@ export function App() {
   persistedRef.current = persisted;
   const defaultFontRef = useRef("");
   defaultFontRef.current = defaultFont;
+  const lastCustomRef = useRef("");
 
   const refreshFonts = useCallback(async () => {
     setFonts(await listFonts());
+    lastCustomRef.current = await getSetting<string>(
+      LAST_CUSTOM_FONT_KEY,
+      "",
+    );
   }, []);
 
   const refreshDocs = useCallback(async () => {
@@ -323,6 +328,8 @@ export function App() {
     // Apply to the editor synchronously: awaiting storage first would let
     // the next click interleave mid-toggle and leave ProseMirror with a
     // stale selection (the next palette insert then replaces the doc).
+    // The last custom family is mirrored in a ref so the toggle never
+    // needs an async read.
     const attrs = current.getAttributes("textStyle") as {
       fontFamily?: string;
     };
@@ -331,22 +338,18 @@ export function App() {
       // On a Hindi font: switch back to the default English font.
       if (defaultFont === "") current.chain().focus().unsetFontFamily().run();
       else current.chain().focus().setFontFamily(defaultFont).run();
+      lastCustomRef.current = currentFamily;
       void setSetting(LAST_CUSTOM_FONT_KEY, currentFamily);
       return;
     }
-    void (async () => {
-      const lastCustom = await getSetting<string>(
-        LAST_CUSTOM_FONT_KEY,
-        uploaded[0] as string,
-      );
-      const target = uploaded.includes(lastCustom)
-        ? lastCustom
-        : (uploaded[0] as string);
-      const live = editorRef.current;
-      if (live === null || live.isDestroyed) return;
-      live.chain().focus().setFontFamily(target).run();
-      await setSetting(LAST_CUSTOM_FONT_KEY, target);
-    })();
+    const fallback = uploaded[0] as string;
+    const target =
+      uploaded.includes(lastCustomRef.current) && lastCustomRef.current !== ""
+        ? lastCustomRef.current
+        : fallback;
+    current.chain().focus().setFontFamily(target).run();
+    lastCustomRef.current = target;
+    void setSetting(LAST_CUSTOM_FONT_KEY, target);
   }, [defaultFont, fonts, openFontManager]);
 
   const handleImageFile = useCallback(async (file: File, atPos?: number) => {
