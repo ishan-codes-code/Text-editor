@@ -148,7 +148,10 @@ export function OverlayHost() {
   };
 
   const body = (
-    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+    <div
+      key={`${top.id}:${top.openedAt}`}
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+    >
       {top.render()}
     </div>
   );

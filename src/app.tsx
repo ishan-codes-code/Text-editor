@@ -1,5 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import { FileText, Moon, RefreshCw, Settings, Sun } from "lucide-react";
+import { useTheme } from "next-themes";
 import {
   lazy,
   Suspense,
@@ -10,12 +11,13 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+import { PalettePanel } from "./components/CharPalette";
+import { DocsPanel } from "./components/DocsSheet";
 import { FindBar } from "./components/FindBar";
-import {
-  LAST_CUSTOM_FONT_KEY,
-  MAX_RECENT_GLYPHS,
-  PALETTE_RECENT_KEY,
-} from "./components/paletteGlyphs";
+import { FontPanel } from "./components/FontManager";
+import { LinkForm } from "./components/LinkDialog";
+import { LAST_CUSTOM_FONT_KEY } from "./components/paletteGlyphs";
+import { SettingsPanel } from "./components/SettingsSheet";
 import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { Button } from "./components/ui/button";
@@ -26,11 +28,11 @@ import {
   setContentWhenReady,
 } from "./editor/applyContent";
 import { useTiptapEditor } from "./hooks/useTiptapEditor";
+import { useOverlayStore } from "./overlays/store";
 import { ensurePersistentStorage, initPwa } from "./pwa";
 import { useSessionStore } from "./session/store";
 import {
   acquireDocLock,
-  addFont,
   addImage,
   backupFileName,
   createBackup,
@@ -38,11 +40,9 @@ import {
   type DocListItem,
   type DocLock,
   deleteDoc,
-  deleteFont,
   deliverBackup,
   duplicateDoc,
   type FontRecord,
-  FontValidationError,
   getDoc,
   getSetting,
   listDocs,
@@ -51,92 +51,39 @@ import {
   prepareImage,
   recordBackupTime,
   registerStoredFonts,
-  renameDoc,
   restoreBackup,
   SaveQueue,
   type SaveState,
   SETTINGS_KEYS,
   saveDocContent,
-  searchDocs,
   setDocTitleFont,
   setSetting,
 } from "./storage";
 
-// Heavy Radix dialogs load on demand, never in the core chunk: this also
-// keeps Vitest's jsdom run (whose SSR externalizer bypasses the
-// preact/compat alias for Radix's CJS deps) from executing Radix trees.
-// Behavior is covered by the Playwright suite in real Chromium instead.
-const DocsSheet = lazy(() =>
-  import("./components/DocsSheet").then((module) => ({
-    default: module.DocsSheet,
-  })),
-);
-const SettingsSheet = lazy(() =>
-  import("./components/SettingsSheet").then((module) => ({
-    default: module.SettingsSheet,
-  })),
-);
-const LinkDialog = lazy(() =>
-  import("./components/LinkDialog").then((module) => ({
-    default: module.LinkDialog,
-  })),
-);
-const FontManager = lazy(() =>
-  import("./components/FontManager").then((module) => ({
-    default: module.FontManager,
-  })),
-);
-const CharPalette = lazy(() =>
-  import("./components/CharPalette").then((module) => ({
-    default: module.CharPalette,
+// The Radix/vaul overlay shells stay out of the core chunk: panels are
+// light, but Dialog/Sheet/Drawer mount only when an overlay opens. The
+// service worker precaches the chunk so sheets work offline.
+const OverlayHost = lazy(() =>
+  import("./overlays/OverlayHost").then((module) => ({
+    default: module.OverlayHost,
   })),
 );
 
-const THEME_KEY = "editor:theme";
 const BACKUP_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const ZOOM_OPTIONS = ["fit", "0.5", "0.75", "1", "1.25", "1.5", "2"];
 
-function currentTheme(): "light" | "dark" {
-  if (typeof document === "undefined") return "light";
-  return document.documentElement.classList.contains("dark") ? "dark" : "light";
-}
-
 function ThemeToggle() {
-  const [theme, setTheme] = useState<"light" | "dark">(currentTheme);
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(THEME_KEY);
-      const initial =
-        stored === "light" || stored === "dark"
-          ? stored
-          : window.matchMedia("(prefers-color-scheme: dark)").matches
-            ? "dark"
-            : "light";
-      document.documentElement.classList.toggle("dark", initial === "dark");
-      setTheme(initial);
-    } catch {
-      // Storage can throw in private mode; the default theme still applies.
-    }
-  }, []);
+  const { resolvedTheme, setTheme } = useTheme();
+  const dark = resolvedTheme === "dark";
   return (
     <Button
       variant="ghost"
       size="icon"
-      aria-label={
-        theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
-      }
-      onClick={() => {
-        const next = theme === "dark" ? "light" : "dark";
-        document.documentElement.classList.toggle("dark", next === "dark");
-        try {
-          localStorage.setItem(THEME_KEY, next);
-        } catch {
-          // Ignore; the toggle still works for this session.
-        }
-        setTheme(next);
-      }}
+      className="size-11"
+      aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+      onClick={() => setTheme(dark ? "light" : "dark")}
     >
-      {theme === "dark" ? <Sun /> : <Moon />}
+      {dark ? <Sun /> : <Moon />}
     </Button>
   );
 }
@@ -146,29 +93,19 @@ export function App() {
   const [persisted, setPersisted] = useState<boolean | null>(null);
   const [docs, setDocs] = useState<DocListItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [docQuery, setDocQuery] = useState("");
   const [readOnly, setReadOnly] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [zoom, setZoom] = useState<string>("1");
+  const [zoom, setZoom] = useState<string>("fit");
+  const [fitScale, setFitScale] = useState(1);
   const [keepColors, setKeepColors] = useState(false);
   const [fonts, setFonts] = useState<FontRecord[]>([]);
-  const [fontError, setFontError] = useState<string | null>(null);
-  const [fontManagerOpen, setFontManagerOpen] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [paletteRecent, setPaletteRecent] = useState<string[]>([]);
   const [defaultFont, setDefaultFont] = useState("");
   const [findState, setFindState] = useState<{
     open: boolean;
     withReplace: boolean;
   }>({ open: false, withReplace: false });
   const [lastBackup, setLastBackup] = useState<number | null>(null);
-  const [linkOpen, setLinkOpen] = useState(false);
-  const [linkUrl, setLinkUrl] = useState("");
-  const [docsOpen, setDocsOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [restoring, setRestoring] = useState(false);
-  const [restoreMode, setRestoreMode] = useState<"merge" | "replace">("merge");
 
   const pwa = useMemo(() => initPwa(), []);
   const autosaveRef = useRef<SaveQueue | null>(null);
@@ -177,19 +114,16 @@ export function App() {
   const activeIdRef = useRef<string | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const lastSnapshotCheckRef = useRef(0);
-  const backupFileRef = useRef<HTMLInputElement | null>(null);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
+  const canvasWrapRef = useRef<HTMLElement | null>(null);
 
   const refreshFonts = useCallback(async () => {
     setFonts(await listFonts());
   }, []);
 
   const refreshDocs = useCallback(async () => {
-    const query = docQuery;
-    const items =
-      query.trim() === "" ? await listDocs() : await searchDocs(query);
-    setDocs(items);
-  }, [docQuery]);
+    setDocs(await listDocs());
+  }, []);
 
   const openDoc = useCallback(
     async (id: string) => {
@@ -288,8 +222,19 @@ export function App() {
     const attrs = editor?.getAttributes("link") as
       | { href?: string }
       | undefined;
-    setLinkUrl(attrs?.href ?? "");
-    setLinkOpen(true);
+    const initialUrl = attrs?.href ?? "";
+    useOverlayStore.getState().openOverlay({
+      id: "link",
+      kind: "dialog",
+      title: "Add link",
+      description: "Enter the URL for the selected text (Ctrl+K).",
+      render: () => (
+        <LinkForm
+          initialUrl={initialUrl}
+          onApply={(url) => void applyLink(url)}
+        />
+      ),
+    });
   }, []);
 
   const toggleFont = useCallback(async () => {
@@ -300,7 +245,7 @@ export function App() {
       toast("No uploaded fonts", {
         description: "Upload a font (for example Kruti Dev) first.",
       });
-      setFontManagerOpen(true);
+      openFontManager();
       return;
     }
     const attrs = current.getAttributes("textStyle") as {
@@ -361,7 +306,7 @@ export function App() {
     onUpdate: handleUpdate,
     onOpenLink: openLinkDialog,
     onOpenFind: (withReplace) => setFindState({ open: true, withReplace }),
-    onOpenPalette: () => setPaletteOpen(true),
+    onOpenPalette: () => openPalette(),
     onToggleFont: () => void toggleFont(),
     onImageFile: (file, atPos) => void handleImageFile(file, atPos),
     getKnownFamilies: () => fonts.map((font) => font.family),
@@ -394,15 +339,13 @@ export function App() {
         storedBackup,
         storedFonts,
         storedDefaultFont,
-        storedRecent,
       ] = await Promise.all([
         getSetting<string | null>(SETTINGS_KEYS.lastOpenedDoc, null),
-        getSetting<string>(SETTINGS_KEYS.zoom, "1"),
+        getSetting<string>(SETTINGS_KEYS.zoom, "fit"),
         getSetting<boolean>(SETTINGS_KEYS.keepPastedColors, false),
         getSetting<number | null>(SETTINGS_KEYS.lastBackup, null),
         listFonts(),
         getSetting<string>(SETTINGS_KEYS.defaultFont, ""),
-        getSetting<string[]>(PALETTE_RECENT_KEY, []),
       ]);
       if (cancelled) return;
       setZoom(storedZoom);
@@ -410,7 +353,6 @@ export function App() {
       setLastBackup(storedBackup);
       setFonts(storedFonts);
       setDefaultFont(storedDefaultFont);
-      setPaletteRecent(storedRecent.slice(0, MAX_RECENT_GLYPHS));
       let items = await listDocs();
       if (items.length === 0) {
         const doc = await createDoc("Untitled");
@@ -531,7 +473,7 @@ export function App() {
     if (defaultFont !== "" && editorRef.current !== null) {
       editorRef.current.chain().focus().setFontFamily(defaultFont).run();
     }
-    setDocsOpen(false);
+    useOverlayStore.getState().closeAllOverlays();
   }, [openDoc, refreshDocs, defaultFont]);
 
   const handleDelete = useCallback(
@@ -563,46 +505,15 @@ export function App() {
     [activeId, docs, openDoc],
   );
 
-  const handleUploadFont = useCallback(
-    async (file: File) => {
-      setFontError(null);
-      try {
-        const record = await addFont(file);
-        await refreshFonts();
-        await setSetting(LAST_CUSTOM_FONT_KEY, record.family);
-        toast("Font added", {
-          description: `${record.family} is ready and works offline.`,
-        });
-      } catch (error) {
-        const message =
-          error instanceof FontValidationError
-            ? error.message
-            : "That file could not be added.";
-        setFontError(message);
-      }
-    },
-    [refreshFonts],
-  );
-
-  const handleDeleteFont = useCallback(
-    async (id: string) => {
-      await deleteFont(id);
-      await refreshFonts();
-      toast("Font deleted", {
-        description:
-          "Existing text keeps the font name and falls back until the font is re-added.",
-      });
-    },
-    [refreshFonts],
-  );
+  const handleKeepColorsChange = useCallback((value: boolean) => {
+    setKeepColors(value);
+    void setSetting(SETTINGS_KEYS.keepPastedColors, value);
+  }, []);
 
   const handleDefaultFontChange = useCallback((family: string) => {
     setDefaultFont(family);
     void setSetting(SETTINGS_KEYS.defaultFont, family);
   }, []);
-
-  const activeTitleFont =
-    docs.find((doc) => doc.id === activeId)?.titleFont ?? null;
 
   const handleTitleFontChange = useCallback(
     async (family: string | null) => {
@@ -616,14 +527,6 @@ export function App() {
 
   const handleInsertGlyph = useCallback((glyph: string) => {
     editorRef.current?.chain().focus().insertContent(glyph).run();
-    setPaletteRecent((previous) => {
-      const next = [glyph, ...previous.filter((item) => item !== glyph)].slice(
-        0,
-        MAX_RECENT_GLYPHS,
-      );
-      void setSetting(PALETTE_RECENT_KEY, next);
-      return next;
-    });
   }, []);
 
   const handleBackup = useCallback(async () => {
@@ -647,7 +550,7 @@ export function App() {
   }, []);
 
   const handleRestoreFile = useCallback(
-    async (file: File) => {
+    async (file: File, restoreMode: "merge" | "replace") => {
       const editor = editorRef.current;
       const session = useSessionStore.getState();
       session.transition("switching");
@@ -656,7 +559,6 @@ export function App() {
       await autosaveRef.current?.flush();
       const wasEditable = editor?.isEditable ?? true;
       editor?.setEditable(false);
-      setRestoring(true);
       try {
         const { report } = await restoreBackup(file, restoreMode, undefined, {
           // The pre-restore backup is delivered BEFORE the wipe, so a
@@ -695,11 +597,9 @@ export function App() {
         if (editor !== null && !editor.isDestroyed) {
           editor.setEditable(wasEditable);
         }
-      } finally {
-        setRestoring(false);
       }
     },
-    [openDoc, restoreMode],
+    [openDoc],
   );
 
   const handleDuplicate = useCallback(
@@ -718,23 +618,138 @@ export function App() {
     [refreshDocs],
   );
 
-  const applyLink = useCallback(() => {
+  const applyLink = useCallback((url: string) => {
     const current = editorRef.current;
-    const href = linkUrl.trim();
+    const href = url.trim();
     if (current !== null) {
       if (href === "") current.chain().focus().unsetLink().run();
       else current.chain().focus().setLink({ href }).run();
     }
-    setLinkOpen(false);
-  }, [linkUrl]);
+    useOverlayStore.getState().closeOverlay("link");
+  }, []);
+
+  const openDocs = useCallback(() => {
+    useOverlayStore.getState().openOverlay({
+      id: "docs",
+      kind: "sheet",
+      side: "left",
+      title: "Documents",
+      description: "Create, open, rename, duplicate, delete and search.",
+      render: () => (
+        <DocsPanel
+          activeId={activeIdRef.current}
+          onOpen={(id) => {
+            useOverlayStore.getState().closeAllOverlays();
+            void openDoc(id);
+          }}
+          onNew={() => void handleNew()}
+          onDuplicate={(id) => void handleDuplicate(id)}
+          onDelete={(id) => void handleDelete(id)}
+          onChanged={() => void refreshDocs()}
+        />
+      ),
+    });
+  }, [handleDelete, handleDuplicate, handleNew, openDoc, refreshDocs]);
+
+  const openSettings = useCallback(() => {
+    useOverlayStore.getState().openOverlay({
+      id: "settings",
+      kind: "sheet",
+      side: "right",
+      title: "Settings",
+      description: "Storage, appearance and backup.",
+      render: () => (
+        <SettingsPanel
+          persisted={persisted}
+          keepColors={keepColors}
+          onKeepColorsChange={handleKeepColorsChange}
+          lastBackup={lastBackup}
+          onBackup={() => void handleBackup()}
+          onRestoreFile={(file, mode) => handleRestoreFile(file, mode)}
+        />
+      ),
+    });
+  }, [
+    handleBackup,
+    handleKeepColorsChange,
+    handleRestoreFile,
+    keepColors,
+    lastBackup,
+    persisted,
+  ]);
+
+  const openFontManager = useCallback(() => {
+    const titleFont =
+      docs.find((doc) => doc.id === activeIdRef.current)?.titleFont ?? null;
+    useOverlayStore.getState().openOverlay({
+      id: "fonts",
+      kind: "sheet",
+      side: "right",
+      title: "Fonts",
+      description:
+        "Uploaded TTF/OTF fonts work offline. Kruti Dev is added like any other font.",
+      render: () => (
+        <FontPanel
+          defaultFont={defaultFont}
+          onDefaultFontChange={handleDefaultFontChange}
+          titleFont={titleFont}
+          onTitleFontChange={(family) => void handleTitleFontChange(family)}
+          onChanged={() => void refreshFonts()}
+        />
+      ),
+    });
+  }, [
+    defaultFont,
+    docs,
+    handleDefaultFontChange,
+    handleTitleFontChange,
+    refreshFonts,
+  ]);
+
+  const openPalette = useCallback(() => {
+    const activeFamily =
+      (
+        editorRef.current?.getAttributes("textStyle") as
+          | { fontFamily?: string }
+          | undefined
+      )?.fontFamily ?? null;
+    useOverlayStore.getState().openOverlay({
+      id: "palette",
+      kind: "sheet",
+      side: "right",
+      title: "Special characters",
+      description: "Tap to insert at the cursor.",
+      render: () => (
+        <PalettePanel
+          activeFamily={activeFamily}
+          onInsert={(glyph) => handleInsertGlyph(glyph)}
+        />
+      ),
+    });
+  }, [handleInsertGlyph]);
 
   const backupStale =
     lastBackup !== null && Date.now() - lastBackup > BACKUP_STALE_MS;
   const neverBackedUp = lastBackup === null;
-  const zoomValue = zoom === "fit" ? undefined : Number(zoom);
+
+  // Fit-to-width (default): scale the A4 canvas to its container, capped at
+  // 1 so wide screens never upscale. Fixed percentages skip measuring.
+  useEffect(() => {
+    if (zoom !== "fit") return;
+    const target = canvasWrapRef.current;
+    if (target === null) return;
+    const measure = () => {
+      setFitScale(Math.min(1, target.clientWidth / 794));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [zoom]);
+  const zoomFactor = zoom === "fit" ? fitScale : Number(zoom);
 
   return (
-    <div className="min-h-dvh bg-background text-foreground">
+    <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground print:h-auto print:overflow-visible">
       {updateAvailable && (
         <div
           role="alert"
@@ -795,13 +810,14 @@ export function App() {
         </div>
       )}
 
-      <header className="sticky top-0 z-10 border-b bg-background/95 print:hidden">
-        <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-2">
+      <header className="z-10 shrink-0 border-b bg-background/95 print:hidden">
+        <div className="flex items-center gap-2 px-4 py-2">
           <Button
             variant="outline"
             size="sm"
+            className="h-11 landscape:lg:hidden"
             aria-label="Documents"
-            onClick={() => setDocsOpen(true)}
+            onClick={() => openDocs()}
           >
             <FileText className="size-4" /> Docs
           </Button>
@@ -822,7 +838,7 @@ export function App() {
                 setZoom(value);
                 void setSetting(SETTINGS_KEYS.zoom, value);
               }}
-              className="h-9 rounded-md border border-input bg-background px-1 text-sm"
+              className="h-11 rounded-md border border-input bg-background px-1 text-sm"
             >
               {ZOOM_OPTIONS.map((option) => (
                 <option key={option} value={option}>
@@ -834,8 +850,9 @@ export function App() {
             <Button
               variant="ghost"
               size="icon"
+              className="size-11"
               aria-label="Open settings"
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => openSettings()}
             >
               <Settings />
             </Button>
@@ -843,7 +860,7 @@ export function App() {
         </div>
 
         <div className="border-t">
-          <div className="mx-auto max-w-3xl">
+          <div>
             <Toolbar
               editor={editor}
               onOpenLink={openLinkDialog}
@@ -853,9 +870,9 @@ export function App() {
                   withReplace: state.withReplace,
                 }))
               }
-              onOpenPalette={() => setPaletteOpen(true)}
+              onOpenPalette={() => openPalette()}
               onToggleFont={() => void toggleFont()}
-              onManageFonts={() => setFontManagerOpen(true)}
+              onManageFonts={() => openFontManager()}
               onInsertImage={() => imageFileRef.current?.click()}
               onSave={() => void flushNow()}
               saveLabel={
@@ -893,126 +910,57 @@ export function App() {
         />
       )}
 
-      <main className="bg-muted/60 px-4 py-6 print:bg-white print:p-0">
-        <div className="mx-auto w-full max-w-[210mm]">
-          <section
-            aria-label="Editor"
-            className="rounded-sm bg-card px-6 py-8 text-card-foreground shadow-sm print:rounded-none print:shadow-none sm:px-10"
-            style={
-              zoomValue === undefined
-                ? undefined
-                : ({ zoom: zoomValue } as React.CSSProperties)
-            }
-          >
-            <EditorContent editor={editor} />
-          </section>
-
-          <StatusBar
-            editor={editor}
-            saveState={saveState}
-            savedAt={savedAt}
-            readOnly={readOnly}
-          />
-          <p data-testid="persist-status" className="sr-only">
-            {persisted === null
-              ? "Storage: checking…"
-              : persisted
-                ? "Storage: persistent"
-                : "Storage: not persistent"}
-          </p>
-        </div>
-      </main>
-
-      {docsOpen && (
-        <Suspense fallback={null}>
-          <DocsSheet
-            open={docsOpen}
-            onOpenChange={setDocsOpen}
-            docs={docs}
+      <div className="flex min-h-0 flex-1">
+        <aside
+          aria-label="Documents panel"
+          className="hidden min-h-0 w-72 shrink-0 overflow-y-auto overscroll-contain border-r bg-background px-3 py-4 landscape:lg:block print:hidden"
+        >
+          <DocsPanel
             activeId={activeId}
-            query={docQuery}
-            onQueryChange={(value) => void setDocQuery(value)}
             onOpen={(id) => {
-              setDocsOpen(false);
               void openDoc(id);
             }}
             onNew={() => void handleNew()}
-            onRename={(id, title) => {
-              void renameDoc(id, title).then(() => refreshDocs());
-            }}
-            onDuplicate={(id) => {
-              void handleDuplicate(id);
-            }}
+            onDuplicate={(id) => void handleDuplicate(id)}
             onDelete={(id) => void handleDelete(id)}
+            onChanged={() => void refreshDocs()}
           />
-        </Suspense>
-      )}
-      {settingsOpen && (
-        <Suspense fallback={null}>
-          <SettingsSheet
-            open={settingsOpen}
-            onOpenChange={setSettingsOpen}
-            persisted={persisted}
-            keepColors={keepColors}
-            onKeepColorsChange={(value) => {
-              setKeepColors(value);
-              void setSetting(SETTINGS_KEYS.keepPastedColors, value);
-            }}
-            lastBackup={lastBackup}
-            onBackup={() => void handleBackup()}
-            onRestoreClick={() => backupFileRef.current?.click()}
-            restoring={restoring}
-            restoreMode={restoreMode}
-            onRestoreModeChange={setRestoreMode}
-            backupFileRef={backupFileRef}
-            onRestoreFile={(file) => void handleRestoreFile(file)}
-          />
-        </Suspense>
-      )}
-      {linkOpen && (
-        <Suspense fallback={null}>
-          <LinkDialog
-            open={linkOpen}
-            onOpenChange={setLinkOpen}
-            url={linkUrl}
-            onUrlChange={setLinkUrl}
-            onApply={applyLink}
-          />
-        </Suspense>
-      )}
-      {fontManagerOpen && (
-        <Suspense fallback={null}>
-          <FontManager
-            open={fontManagerOpen}
-            onOpenChange={setFontManagerOpen}
-            fonts={fonts}
-            defaultFont={defaultFont}
-            onDefaultFontChange={handleDefaultFontChange}
-            titleFont={activeTitleFont}
-            onTitleFontChange={(family) => void handleTitleFontChange(family)}
-            error={fontError}
-            onUpload={(file) => void handleUploadFont(file)}
-            onDelete={(id) => void handleDeleteFont(id)}
-          />
-        </Suspense>
-      )}
-      {paletteOpen && (
-        <Suspense fallback={null}>
-          <CharPalette
-            open={paletteOpen}
-            onOpenChange={setPaletteOpen}
-            activeFamily={
-              (
-                editor?.getAttributes("textStyle") as
-                  | { fontFamily?: string }
-                  | undefined
-              )?.fontFamily ?? null
-            }
-            recent={paletteRecent}
-            onInsert={handleInsertGlyph}
-          />
-        </Suspense>
-      )}
+        </aside>
+
+        <main
+          style={{ scrollbarGutter: "stable" }}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/60 px-4 py-6 print:overflow-visible print:bg-white print:p-0"
+        >
+          <div className="mx-auto w-full max-w-[210mm]">
+            <section
+              aria-label="Editor"
+              ref={canvasWrapRef}
+              className="rounded-sm bg-card px-6 py-8 text-card-foreground shadow-sm print:rounded-none print:shadow-none sm:px-10"
+              style={{ zoom: zoomFactor } as React.CSSProperties}
+            >
+              <EditorContent editor={editor} />
+            </section>
+
+            <StatusBar
+              editor={editor}
+              saveState={saveState}
+              savedAt={savedAt}
+              readOnly={readOnly}
+            />
+            <p data-testid="persist-status" className="sr-only">
+              {persisted === null
+                ? "Storage: checking…"
+                : persisted
+                  ? "Storage: persistent"
+                  : "Storage: not persistent"}
+            </p>
+          </div>
+        </main>
+      </div>
+
+      <Suspense fallback={null}>
+        <OverlayHost />
+      </Suspense>
 
       <Toaster />
     </div>

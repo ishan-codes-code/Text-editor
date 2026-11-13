@@ -102,6 +102,8 @@ recommends 48dp where space allows). Toolbar and header controls are 44px
   `scrollbar-gutter: stable`).
 - Regions: alert banners → top bar → toolbar → canvas → status bar; side
   panel docks `landscape:lg:block`, otherwise slide-over via overlay manager.
+  The canvas (`main`) is the one document scroll container; the docked panel
+  scrolls internally only when its own list overflows.
 - Every overlay: `max-height: 100dvh` with its own inner scroll; single
   scroll lock (only the top overlay is modal); Esc and Android back close
   the top item; focus returns when the stack empties.

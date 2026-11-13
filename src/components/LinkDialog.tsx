@@ -1,62 +1,34 @@
-import { Check } from "lucide-react";
+import { useState } from "react";
 import { Button } from "./ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "./ui/dialog";
 
-export interface LinkDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  url: string;
-  onUrlChange: (url: string) => void;
-  onApply: () => void;
+export interface LinkFormProps {
+  initialUrl: string;
+  onApply: (url: string) => void;
 }
 
-/** Lazy-loaded (see App): keeps Radix out of the core chunk. */
-export function LinkDialog({
-  open,
-  onOpenChange,
-  url,
-  onUrlChange,
-  onApply,
-}: LinkDialogProps) {
+/** Content-only panel: the overlay manager provides the dialog shell. */
+export function LinkForm({ initialUrl, onApply }: LinkFormProps) {
+  const [url, setUrl] = useState(initialUrl);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Add link</DialogTitle>
-          <DialogDescription>
-            Enter the URL for the selected text (Ctrl+K).
-          </DialogDescription>
-        </DialogHeader>
-        <label className="flex flex-col gap-1 text-sm">
-          URL
-          <input
-            type="url"
-            value={url}
-            placeholder="https://example.com"
-            onChange={(event) => onUrlChange(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") onApply();
-            }}
-            className="h-9 rounded-md border border-input bg-background px-2"
-          />
-        </label>
-        <DialogFooter>
-          <DialogClose>
-            <Button variant="outline">Cancel</Button>
-          </DialogClose>
-          <Button onClick={onApply}>
-            <Check className="size-4" /> Apply
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <div className="flex flex-col gap-4">
+      <label className="flex flex-col gap-1.5 text-sm">
+        URL
+        <input
+          type="url"
+          value={url}
+          placeholder="https://example.com"
+          onChange={(event) => setUrl(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onApply(url);
+          }}
+          className="h-11 rounded-md border border-input bg-background px-2"
+        />
+      </label>
+      <div className="flex justify-end">
+        <Button className="h-11" onClick={() => onApply(url)}>
+          Apply
+        </Button>
+      </div>
+    </div>
   );
 }

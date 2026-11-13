@@ -174,6 +174,7 @@ function ToolButton({
     <Button
       variant={active === true ? "secondary" : "ghost"}
       size="icon"
+      className="size-11 shrink-0"
       aria-label={label}
       title={title}
       disabled={disabled}
@@ -294,7 +295,7 @@ export function Toolbar({
       <select
         id="toolbar-block"
         aria-label="Block style"
-        className="h-9 rounded-md border border-input bg-background px-1 text-sm"
+        className="h-11 rounded-md border border-input bg-background px-1 text-sm"
         value={ui.block}
         onChange={(event) => {
           const value = event.currentTarget.value;
@@ -318,7 +319,7 @@ export function Toolbar({
       <select
         id="toolbar-font"
         aria-label="Font family"
-        className="h-9 max-w-36 rounded-md border border-input bg-background px-1 text-sm"
+        className="h-11 max-w-36 rounded-md border border-input bg-background px-1 text-sm"
         value={ui.fontFamily}
         onChange={(event) => {
           const value = event.currentTarget.value;
@@ -353,7 +354,7 @@ export function Toolbar({
       <select
         id="toolbar-size"
         aria-label="Font size"
-        className="h-9 rounded-md border border-input bg-background px-1 text-sm"
+        className="h-11 rounded-md border border-input bg-background px-1 text-sm"
         value={ui.fontSize.replace("px", "")}
         onChange={(event) => {
           const value = event.currentTarget.value;
@@ -374,7 +375,7 @@ export function Toolbar({
       <select
         id="toolbar-line-height"
         aria-label="Line spacing"
-        className="h-9 rounded-md border border-input bg-background px-1 text-sm"
+        className="h-11 rounded-md border border-input bg-background px-1 text-sm"
         value={ui.lineHeight}
         onChange={(event) => {
           const value = event.currentTarget.value;
@@ -392,7 +393,7 @@ export function Toolbar({
       <label
         aria-label="Text color"
         title="Text color"
-        className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md hover:bg-accent"
+        className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-accent"
       >
         <span aria-hidden="true" className="font-bold text-sm">
           A
@@ -409,7 +410,7 @@ export function Toolbar({
       <label
         aria-label="Highlight color"
         title="Highlight color"
-        className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md hover:bg-accent"
+        className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-accent"
       >
         <Highlighter className="size-4" />
         <input
@@ -604,7 +605,7 @@ export function Toolbar({
         aria-label={`Save (${saveLabel})`}
         title="Save now (Ctrl+S)"
         onClick={onSave}
-        className="ml-1 shrink-0"
+        className="ml-1 h-11 shrink-0"
       >
         <Save className="size-4" /> {saveLabel}
       </Button>
