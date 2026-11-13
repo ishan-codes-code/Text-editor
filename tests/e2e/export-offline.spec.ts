@@ -25,7 +25,14 @@ test("export and import work, including DOCX while offline", async ({
   await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.press("ControlOrMeta+b");
   await page.keyboard.press("End");
-  // Autosave before exporting.
+  // Autosave before exporting. The idle label already reads "Saved": wait
+  // for the schedule to flip it to dirty first, otherwise the Saved wait
+  // below passes vacuously and the reload can win the race against the
+  // write under parallel load (the pagehide flush is best-effort only).
+  await expect(page.getByTestId("save-status")).toContainText(
+    /Unsaved|Saving/,
+    { timeout: 5000 },
+  );
   await expect(page.getByTestId("save-status")).toContainText(/Saved/, {
     timeout: 5000,
   });
