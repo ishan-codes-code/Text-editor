@@ -11,11 +11,9 @@ test("loads online, then works offline after reload", async ({
   context,
 }) => {
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: /offline text editor/i }),
-  ).toBeVisible();
   const editor = page.locator('[aria-label="Editor"] .tiptap');
   await expect(editor).toBeVisible();
+  await expect(page.getByRole("toolbar", { name: "Formatting" })).toBeVisible();
 
   // Service worker is registered (prompt mode: installed without reloading).
   // Activation can still be in flight right after first load, so poll.
@@ -66,16 +64,29 @@ test("loads online, then works offline after reload", async ({
   await editor.click();
   await page.keyboard.type("hello offline");
   await expect(page.getByTestId("word-count")).toContainText("2 words");
+  // Autosave persists within ~400 ms; wait for the saved state so the
+  // offline reload below restores this exact content.
+  await expect(page.getByTestId("save-status")).toContainText(/Saved/, {
+    timeout: 5000,
+  });
 
-  // Go offline and reload: shell, editor and styles come from the precache.
+  // Go offline and reload: shell, editor, lazy chunks and styles come from
+  // the precache, and the document restores from IndexedDB.
   await context.setOffline(true);
   await page.reload();
-  await expect(
-    page.getByRole("heading", { name: /offline text editor/i }),
-  ).toBeVisible();
   const offlineEditor = page.locator('[aria-label="Editor"] .tiptap');
   await expect(offlineEditor).toBeVisible();
+  await expect(offlineEditor).toContainText("hello offline");
+
+  // Lazy editor dialogs work offline too (proves their chunks precached).
+  await page.getByRole("button", { name: "Documents" }).click();
+  await expect(page.locator("dialog[open]")).toContainText("Documents");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("dialog[open]")).toBeHidden();
+
+  // Editing works offline: replace the restored content.
   await offlineEditor.click();
+  await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.type("still works");
   await expect(page.getByTestId("word-count")).toContainText("2 words");
 });
