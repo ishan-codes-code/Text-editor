@@ -10,6 +10,13 @@ async function readyEditor(page: Page) {
   await page.goto("/");
   const editor = page.locator('[aria-label="Editor"] .tiptap');
   await expect(editor).toBeVisible();
+  // The editor mounts non-editable and only enables editing once boot
+  // (font registration + openDoc) finishes. Keystrokes sent earlier are
+  // silently dropped, so a fast test can select an empty document and the
+  // shortcut under test becomes a no-op. Wait for editability first.
+  await expect(editor).toHaveAttribute("contenteditable", "true", {
+    timeout: 10_000,
+  });
   await editor.click();
   return editor;
 }
