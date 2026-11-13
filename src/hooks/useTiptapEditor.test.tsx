@@ -11,7 +11,7 @@ function Harness({
   onEditor: (editor: Editor | null) => void;
   content?: string;
 }) {
-  const { mountRef, editor } = useTiptapEditor(content);
+  const { mountRef, editor } = useTiptapEditor({ initialContent: content });
   useEffect(() => {
     onEditor(editor);
   }, [editor, onEditor]);
@@ -23,7 +23,7 @@ describe("useTiptapEditor", () => {
     document.body.innerHTML = "";
   });
 
-  it("creates a bare paragraph editor and destroys it on unmount", async () => {
+  it("mounts the full editor and destroys it on unmount", async () => {
     const seen: (Editor | null)[] = [];
     const container = document.createElement("div");
     document.body.append(container);
@@ -38,8 +38,8 @@ describe("useTiptapEditor", () => {
 
     expect(editor.isDestroyed).toBe(false);
     expect(editor.schema.nodes.doc).not.toBeUndefined();
-    expect(editor.schema.nodes.paragraph).not.toBeUndefined();
-    expect(editor.schema.nodes.text).not.toBeUndefined();
+    expect(editor.schema.nodes.pageBreak).not.toBeUndefined();
+    expect(editor.commands.indent).toBeDefined();
 
     const editable = container.querySelector('.tiptap[contenteditable="true"]');
     expect(editable?.getAttribute("spellcheck")).toBe("false");

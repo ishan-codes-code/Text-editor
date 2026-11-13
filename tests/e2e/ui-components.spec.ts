@@ -1,27 +1,24 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Every scaffolded shadcn-style component renders and behaves under
- * preact/compat in real Chrome: native <dialog> focus trap for Dialog and
- * Sheet, light-dismiss + Escape for the menu, filter + keyboard select for
- * Command, and auto-dismiss for the Sonner-style toaster.
+ * Phase-2 UI surfaces under preact/compat in real Chromium: the lazy link
+ * dialog (focus trap, Escape, apply), the docs and settings sheets, the
+ * theme toggle and the zoom control. Radix interaction stays in Playwright
+ * because Vitest's SSR externalizer bypasses the preact/compat alias.
  */
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: /offline text editor/i }),
-  ).toBeVisible();
+  await expect(page.locator('[aria-label="Editor"] .tiptap')).toBeVisible();
 });
 
-test("dialog traps focus, closes with Escape and returns focus", async ({
+test("link dialog traps focus, closes with Escape and returns focus", async ({
   page,
 }) => {
-  const trigger = page.getByRole("button", { name: "About" });
+  const trigger = page.getByRole("button", { name: "Link (Ctrl+K)" });
   await trigger.click();
-  // Both Dialog and Sheet mount a <dialog>; only the open one matters.
   const dialog = page.locator("dialog[open]");
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("Offline text editor");
+  await expect(dialog).toContainText("Add link");
 
   const focusInside = await page.evaluate(() => {
     const element = document.querySelector("dialog[open]");
@@ -34,27 +31,17 @@ test("dialog traps focus, closes with Escape and returns focus", async ({
   await expect(trigger).toBeFocused();
 });
 
-test("dropdown menu selects an item and toasts", async ({ page }) => {
-  await page.getByRole("button", { name: "Insert" }).click();
-  const menu = page.getByRole("menu");
-  await expect(menu).toBeVisible();
-  await expect(page.getByRole("button", { name: "Insert" })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
-
-  await page.getByRole("menuitem", { name: "Table" }).click();
-  await expect(menu).toBeHidden();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Tables land in phase 5" }),
-  ).toBeVisible();
-});
-
-test("settings sheet opens and closes on backdrop click", async ({ page }) => {
+test("settings sheet shows storage status and backup actions", async ({
+  page,
+}) => {
   await page.getByRole("button", { name: "Open settings" }).click();
   const dialog = page.locator("dialog[open]");
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Persistent storage");
+  await expect(
+    dialog.getByRole("button", { name: "Back up now" }),
+  ).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Restore…" })).toBeVisible();
 
   // Top-layer dialog sits above the sticky header, so the viewport corner
   // hits the backdrop.
@@ -62,19 +49,24 @@ test("settings sheet opens and closes on backdrop click", async ({ page }) => {
   await expect(dialog).toBeHidden();
 });
 
-test("command palette filters and selects via keyboard", async ({ page }) => {
-  const input = page.getByPlaceholder("Search fonts…");
-  await input.fill("serif");
-  await expect(page.getByRole("option", { name: "Serif" })).toBeVisible();
-  await expect(page.getByRole("option", { name: "Monospace" })).toBeHidden();
+test("docs sheet creates and searches", async ({ page }) => {
+  await page.getByRole("button", { name: "Documents" }).click();
+  let sheet = page.locator("dialog[open]");
+  await expect(sheet).toContainText("Documents");
 
-  await input.fill("");
-  await expect(page.getByRole("option", { name: "Monospace" })).toBeVisible();
-  await input.press("ArrowDown");
-  await input.press("Enter");
+  // Creating opens the new doc and closes the sheet; reopen to manage.
+  await sheet.getByRole("button", { name: "New document" }).click();
+  await expect(sheet).toBeHidden();
+  await page.getByRole("button", { name: "Documents" }).click();
+  sheet = page.locator("dialog[open]");
   await expect(
-    page.getByRole("status").filter({ hasText: "Font: Monospace" }),
-  ).toBeVisible();
+    sheet.getByRole("button", { name: /Open Untitled/ }),
+  ).not.toHaveCount(0);
+
+  await sheet.getByPlaceholder("Search documents…").fill("zzzz-no-match");
+  await expect(sheet).toContainText("No documents match.");
+  await sheet.getByPlaceholder("Search documents…").fill("");
+  await expect(sheet).not.toContainText("No documents match.");
 });
 
 test("theme toggle switches dark mode and persists", async ({ page }) => {
@@ -100,4 +92,11 @@ test("theme toggle switches dark mode and persists", async ({ page }) => {
       page.evaluate(() => document.documentElement.classList.contains("dark")),
     )
     .toBe(false);
+});
+
+test("zoom selection persists across reload", async ({ page }) => {
+  await page.getByLabel("Zoom").selectOption("1.5");
+  await page.reload();
+  await expect(page.locator('[aria-label="Editor"] .tiptap')).toBeVisible();
+  await expect(page.getByLabel("Zoom")).toHaveValue("1.5");
 });
