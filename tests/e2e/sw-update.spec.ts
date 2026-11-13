@@ -25,7 +25,9 @@ test("no automatic reload; worker uses prompt-mode updates", async ({
 
   // Steady state: nothing reloads the page and no update banner appears.
   await page.waitForTimeout(5000);
-  expect(await page.evaluate(() => (window as unknown as { __boot: number }).__boot)).toBeGreaterThan(0);
+  expect(
+    await page.evaluate(() => (window as unknown as { __boot: number }).__boot),
+  ).toBeGreaterThan(0);
   await expect(editor).toContainText("update flow probe");
   await expect(page.getByText("Update available.")).toBeHidden();
 
