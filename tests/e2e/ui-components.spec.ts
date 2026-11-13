@@ -96,6 +96,44 @@ test("theme toggle switches dark mode and persists", async ({ page }) => {
 
 test("zoom selection persists across reload", async ({ page }) => {
   await page.getByLabel("Zoom").selectOption("1.5");
+  // The setting writes to IndexedDB asynchronously; wait for it to land
+  // before reloading or the reload can win the race and restore "1".
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            new Promise<string | null>((resolve, reject) => {
+              const open = indexedDB.open("offline-text-editor");
+              open.onsuccess = () => {
+                const db = open.result;
+                try {
+                  const request = db
+                    .transaction("settings", "readonly")
+                    .objectStore("settings")
+                    .get("zoom");
+                  request.onsuccess = () => {
+                    db.close();
+                    resolve(
+                      (request.result as { value?: string } | undefined)
+                        ?.value ?? null,
+                    );
+                  };
+                  request.onerror = () => {
+                    db.close();
+                    reject(request.error);
+                  };
+                } catch (error) {
+                  db.close();
+                  reject(error);
+                }
+              };
+              open.onerror = () => reject(open.error);
+            }),
+        ),
+      { timeout: 5000 },
+    )
+    .toBe("1.5");
   await page.reload();
   await expect(page.locator('[aria-label="Editor"] .tiptap')).toBeVisible();
   await expect(page.getByLabel("Zoom")).toHaveValue("1.5");
