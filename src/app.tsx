@@ -151,6 +151,10 @@ export function App() {
     async (id: string) => {
       const editor = editorRef.current;
       if (editor === null) return;
+      // Lock the surface while switching: keystrokes typed between the
+      // flush and setContent would otherwise be silently wiped by the load.
+      const wasEditable = editor.isEditable;
+      editor.setEditable(false);
       // Flush + release the previous document first: one transaction per
       // save means a crash here cannot corrupt either document.
       await autosaveRef.current?.flush();
@@ -160,7 +164,10 @@ export function App() {
       lockRef.current = null;
 
       const doc = await getDoc(id);
-      if (doc === undefined) return;
+      if (doc === undefined) {
+        editor.setEditable(wasEditable);
+        return;
+      }
       const lock = await acquireDocLock(id);
       lockRef.current = lock;
       activeIdRef.current = id;
@@ -223,6 +230,10 @@ export function App() {
   }, []);
 
   const { mountRef, editor } = useTiptapEditor({
+    // Mount non-editable: openDoc enables editing once the document is
+    // loaded. Otherwise keystrokes typed between mount and setContent
+    // would be silently wiped by the load.
+    editable: false,
     onUpdate: handleUpdate,
     onOpenLink: openLinkDialog,
     getKnownFamilies: () => knownFamilies,

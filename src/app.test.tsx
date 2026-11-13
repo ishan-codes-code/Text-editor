@@ -5,10 +5,15 @@ import { App } from "./app";
 describe("App", () => {
   let container: HTMLDivElement;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     container = document.createElement("div");
     document.body.append(container);
-    indexedDB.deleteDatabase("offline-text-editor");
+    // Dexie's own delete closes open handles first, then wipes: a raw
+    // fire-and-forget deleteDatabase races boot and flakes the suite.
+    // Forgetting the shared instance forces the app to reopen a fresh one.
+    const { getDb, resetDbForTests } = await import("./storage/db");
+    await getDb().delete();
+    resetDbForTests();
   });
 
   afterEach(() => {
@@ -68,6 +73,14 @@ describe("App", () => {
           '[aria-label="Editor"] .tiptap[contenteditable="true"]',
         ),
       ).not.toBeNull();
+    });
+    // Boot must finish (doc loaded, surface enabled) before simulating
+    // typing: input dispatched during the load is intentionally ignored so
+    // a real user's early keystrokes can never be wiped by setContent.
+    await vi.waitFor(() => {
+      expect(container.querySelector("header h1")?.textContent).toBe(
+        "Untitled",
+      );
     });
     const editable = container.querySelector(
       '[aria-label="Editor"] .tiptap[contenteditable="true"]',
