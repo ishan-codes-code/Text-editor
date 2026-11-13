@@ -1,5 +1,5 @@
 import type { Editor } from "@tiptap/core";
-import { FileText, Moon, RefreshCw, Settings, Sun } from "lucide-preact";
+import { FileText, Moon, RefreshCw, Settings, Sun } from "lucide-react";
 import {
   lazy,
   Suspense,

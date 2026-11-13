@@ -32,7 +32,7 @@ import {
   Trash2,
   Underline,
   Undo,
-} from "lucide-preact";
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "./ui/button";
 

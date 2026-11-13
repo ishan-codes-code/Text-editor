@@ -1,4 +1,4 @@
-import { Copy, FilePlus, Pencil, Trash2 } from "lucide-preact";
+import { Copy, FilePlus, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { DocListItem } from "../storage/documents";
 import { Button } from "./ui/button";

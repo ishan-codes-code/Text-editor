@@ -1,4 +1,4 @@
-import { Trash2, Upload } from "lucide-preact";
+import { Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import type { FontRecord } from "../storage";
 import { Button } from "./ui/button";

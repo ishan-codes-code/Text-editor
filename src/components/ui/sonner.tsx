@@ -1,4 +1,4 @@
-import { X } from "lucide-preact";
+import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
 
