@@ -1,24 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  type DocListItem,
-  listDocs,
-  renameDoc,
-  searchDocs,
-} from "../storage/documents";
+import { useMemo, useState } from "react";
+import { type DocListItem, renameDoc } from "../storage/documents";
 import { DocList } from "./DocList";
 
 export interface DocsPanelProps {
+  docs: DocListItem[];
   activeId: string | null;
   onOpen: (id: string) => void;
   onNew: () => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
-  /** Refreshes app-level lists (header title, docked panel) after mutations. */
+  /** Refreshes app-level lists (header title) after mutations. */
   onChanged: () => void;
 }
 
 /** Content-only panel: the overlay manager provides the sheet shell. */
 export function DocsPanel({
+  docs,
   activeId,
   onOpen,
   onNew,
@@ -26,49 +23,38 @@ export function DocsPanel({
   onDelete,
   onChanged,
 }: DocsPanelProps) {
-  const [docs, setDocs] = useState<DocListItem[]>([]);
   const [query, setQuery] = useState("");
-
-  const reload = useCallback(async () => {
-    setDocs(query.trim() === "" ? await listDocs() : await searchDocs(query));
-  }, [query]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
+  const needle = query.trim().toLowerCase();
+  const visible = useMemo(
+    () =>
+      needle === ""
+        ? docs
+        : docs.filter((doc) => doc.title.toLowerCase().includes(needle)),
+    [docs, needle],
+  );
+  // Boot always ensures at least one document, so an empty list only ever
+  // means the first load has not landed yet.
+  if (docs.length === 0) {
+    return (
+      <p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
+    );
+  }
   return (
     <DocList
-      docs={docs}
+      docs={visible}
       activeId={activeId}
       query={query}
       onQueryChange={setQuery}
       onOpen={onOpen}
-      onNew={() => {
-        void (async () => {
-          await onNew();
-          await reload();
-        })();
-      }}
+      onNew={() => void onNew()}
       onRename={(id, title) => {
         void (async () => {
           await renameDoc(id, title);
-          await reload();
           onChanged();
         })();
       }}
-      onDuplicate={(id) => {
-        void (async () => {
-          await onDuplicate(id);
-          await reload();
-        })();
-      }}
-      onDelete={(id) => {
-        void (async () => {
-          await onDelete(id);
-          await reload();
-        })();
-      }}
+      onDuplicate={(id) => void onDuplicate(id)}
+      onDelete={(id) => void onDelete(id)}
     />
   );
 }

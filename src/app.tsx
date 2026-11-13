@@ -116,6 +116,18 @@ export function App() {
   const lastSnapshotCheckRef = useRef(0);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
   const canvasWrapRef = useRef<HTMLElement | null>(null);
+  const docsRef = useRef<DocListItem[]>([]);
+  docsRef.current = docs;
+  const fontsRef = useRef<FontRecord[]>([]);
+  fontsRef.current = fonts;
+  const keepColorsRef = useRef(false);
+  keepColorsRef.current = keepColors;
+  const lastBackupRef = useRef<number | null>(null);
+  lastBackupRef.current = lastBackup;
+  const persistedRef = useRef<boolean | null>(null);
+  persistedRef.current = persisted;
+  const defaultFontRef = useRef("");
+  defaultFontRef.current = defaultFont;
 
   const refreshFonts = useCallback(async () => {
     setFonts(await listFonts());
@@ -637,6 +649,7 @@ export function App() {
       description: "Create, open, rename, duplicate, delete and search.",
       render: () => (
         <DocsPanel
+          docs={docsRef.current}
           activeId={activeIdRef.current}
           onOpen={(id) => {
             useOverlayStore.getState().closeAllOverlays();
@@ -660,10 +673,10 @@ export function App() {
       description: "Storage, appearance and backup.",
       render: () => (
         <SettingsPanel
-          persisted={persisted}
-          keepColors={keepColors}
+          persisted={persistedRef.current}
+          keepColors={keepColorsRef.current}
           onKeepColorsChange={handleKeepColorsChange}
-          lastBackup={lastBackup}
+          lastBackup={lastBackupRef.current}
           onBackup={() => void handleBackup()}
           onRestoreFile={(file, mode) => handleRestoreFile(file, mode)}
         />
@@ -680,7 +693,8 @@ export function App() {
 
   const openFontManager = useCallback(() => {
     const titleFont =
-      docs.find((doc) => doc.id === activeIdRef.current)?.titleFont ?? null;
+      docsRef.current.find((doc) => doc.id === activeIdRef.current)
+        ?.titleFont ?? null;
     useOverlayStore.getState().openOverlay({
       id: "fonts",
       kind: "sheet",
@@ -690,7 +704,8 @@ export function App() {
         "Uploaded TTF/OTF fonts work offline. Kruti Dev is added like any other font.",
       render: () => (
         <FontPanel
-          defaultFont={defaultFont}
+          fonts={fontsRef.current}
+          defaultFont={defaultFontRef.current}
           onDefaultFontChange={handleDefaultFontChange}
           titleFont={titleFont}
           onTitleFontChange={(family) => void handleTitleFontChange(family)}
@@ -916,6 +931,7 @@ export function App() {
           className="hidden min-h-0 w-72 shrink-0 overflow-y-auto overscroll-contain border-r bg-background px-3 py-4 landscape:lg:block print:hidden"
         >
           <DocsPanel
+            docs={docs}
             activeId={activeId}
             onOpen={(id) => {
               void openDoc(id);

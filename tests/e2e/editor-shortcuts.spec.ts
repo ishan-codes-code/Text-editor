@@ -123,7 +123,7 @@ test("link via Ctrl+K opens the dialog and applies", async ({ page }) => {
   await page.keyboard.type("example");
   await selectAll(page);
   await page.keyboard.press("ControlOrMeta+k");
-  const dialog = page.locator("dialog[open]");
+  const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Add link");
   await dialog.getByLabel("URL").fill("https://example.com");
   await dialog.getByRole("button", { name: "Apply" }).click();

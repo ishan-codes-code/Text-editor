@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { getSetting, SETTINGS_KEYS } from "../storage";
+import { useRef, useState } from "react";
 import { Button } from "./ui/button";
 
 export interface SettingsPanelProps {
@@ -16,28 +15,13 @@ export function SettingsPanel({
   persisted,
   keepColors,
   onKeepColorsChange,
-  lastBackup: lastBackupProp,
+  lastBackup,
   onBackup,
   onRestoreFile,
 }: SettingsPanelProps) {
-  const [localKeepColors, setLocalKeepColors] = useState(keepColors);
-  const [lastBackup, setLastBackup] = useState<number | null>(lastBackupProp);
   const [restoreMode, setRestoreMode] = useState<"merge" | "replace">("merge");
   const [restoring, setRestoring] = useState(false);
   const backupFileRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    void (async () => {
-      setLastBackup(
-        await getSetting<number | null>(SETTINGS_KEYS.lastBackup, null),
-      );
-    })();
-  }, []);
-
-  const handleKeepColors = (value: boolean) => {
-    setLocalKeepColors(value);
-    onKeepColorsChange(value);
-  };
 
   return (
     <div className="flex flex-col gap-4 text-sm">
@@ -55,8 +39,8 @@ export function SettingsPanel({
         <input
           type="checkbox"
           className="size-5"
-          checked={localKeepColors}
-          onChange={(event) => handleKeepColors(event.currentTarget.checked)}
+          checked={keepColors}
+          onChange={(event) => onKeepColorsChange(event.currentTarget.checked)}
         />
         Keep colors when pasting
       </label>
@@ -70,20 +54,7 @@ export function SettingsPanel({
           </strong>
         </p>
         <div className="flex flex-wrap gap-2">
-          <Button
-            className="h-11"
-            onClick={() => {
-              void (async () => {
-                await onBackup();
-                setLastBackup(
-                  await getSetting<number | null>(
-                    SETTINGS_KEYS.lastBackup,
-                    null,
-                  ),
-                );
-              })();
-            }}
-          >
+          <Button className="h-11" onClick={() => void onBackup()}>
             Back up now
           </Button>
           <Button

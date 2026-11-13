@@ -47,9 +47,9 @@ export function DocList({
           placeholder="Search documents…"
           value={query}
           onChange={(event) => onQueryChange(event.currentTarget.value)}
-          className="h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm"
+          className="h-11 flex-1 rounded-md border border-input bg-background px-2 text-sm"
         />
-        <Button size="sm" onClick={onNew} aria-label="New document">
+        <Button size="sm" className="h-11" onClick={onNew} aria-label="New document">
           <FilePlus className="size-4" /> New
         </Button>
       </div>
@@ -76,7 +76,7 @@ export function DocList({
                     if (event.key === "Enter") commitRename(doc.id);
                     if (event.key === "Escape") setRenamingId(null);
                   }}
-                  className="h-8 flex-1 rounded-md border border-input bg-background px-2 text-sm"
+                  className="h-11 flex-1 rounded-md border border-input bg-background px-2 text-sm"
                 />
               ) : (
                 <button
@@ -84,7 +84,7 @@ export function DocList({
                   onClick={() => onOpen(doc.id)}
                   aria-label={`Open ${doc.title}`}
                   aria-current={active ? "true" : undefined}
-                  className="min-w-0 flex-1 text-left"
+                  className="flex min-h-11 min-w-0 flex-1 items-center text-left"
                 >
                   <span
                     className="block truncate text-sm font-medium"

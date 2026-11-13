@@ -1,18 +1,18 @@
 import { Trash2, Upload } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   addFont,
   deleteFont,
   type FontRecord,
   FontValidationError,
-  listFonts,
   setSetting,
 } from "../storage";
 import { LAST_CUSTOM_FONT_KEY } from "./paletteGlyphs";
 import { Button } from "./ui/button";
 
 export interface FontPanelProps {
+  fonts: FontRecord[];
   defaultFont: string;
   onDefaultFontChange: (family: string) => void;
   titleFont: string | null;
@@ -23,34 +23,23 @@ export interface FontPanelProps {
 
 /** Content-only panel: the overlay manager provides the sheet shell. */
 export function FontPanel({
+  fonts,
   defaultFont,
   onDefaultFontChange,
   titleFont,
   onTitleFontChange,
   onChanged,
 }: FontPanelProps) {
-  const [fonts, setFonts] = useState<FontRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-
-  useEffect(() => {
-    void (async () => {
-      setFonts(await listFonts());
-    })();
-  }, []);
-
-  const reload = async () => {
-    setFonts(await listFonts());
-    onChanged();
-  };
 
   const handleUpload = async (file: File) => {
     setError(null);
     try {
       const record = await addFont(file);
       await setSetting(LAST_CUSTOM_FONT_KEY, record.family);
-      await reload();
+      onChanged();
       toast("Font added", {
         description: `${record.family} is ready and works offline.`,
       });
@@ -159,7 +148,7 @@ export function FontPanel({
                     void (async () => {
                       await deleteFont(font.id);
                       setConfirmDelete(null);
-                      await reload();
+                      onChanged();
                       toast("Font deleted", {
                         description:
                           "Existing text keeps the font name and falls back until the font is re-added.",

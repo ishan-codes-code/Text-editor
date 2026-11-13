@@ -55,14 +55,14 @@ test("doc list creates, renames, duplicates, searches and deletes", async ({
   await expect(editor).toBeVisible();
 
   await page.getByRole("button", { name: "Documents" }).click();
-  let sheet = page.locator("dialog[open]");
+  let sheet = page.getByRole("dialog");
   await expect(sheet).toContainText("Documents");
 
   // Create opens the new doc and closes the sheet; reopen to manage it.
   await sheet.getByRole("button", { name: "New document" }).click();
   await expect(sheet).toBeHidden();
   await page.getByRole("button", { name: "Documents" }).click();
-  sheet = page.locator("dialog[open]");
+  sheet = page.getByRole("dialog");
   await expect(
     sheet.getByRole("button", { name: /Open Untitled/ }),
   ).toHaveCount(2);

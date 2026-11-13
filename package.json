@@ -14,7 +14,8 @@
     "lint": "biome check .",
     "test": "vitest run",
     "e2e": "playwright test",
-    "size": "size-limit"
+    "size": "size-limit",
+    "size:budget": "node scripts/size-budget.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.3.1",

@@ -80,9 +80,9 @@ test("loads online, then works offline after reload", async ({
 
   // Lazy editor dialogs work offline too (proves their chunks precached).
   await page.getByRole("button", { name: "Documents" }).click();
-  await expect(page.locator("dialog[open]")).toContainText("Documents");
+  await expect(page.getByRole("dialog")).toContainText("Documents");
   await page.keyboard.press("Escape");
-  await expect(page.locator("dialog[open]")).toBeHidden();
+  await expect(page.getByRole("dialog")).toBeHidden();
 
   // Editing works offline: replace the restored content.
   await offlineEditor.click();

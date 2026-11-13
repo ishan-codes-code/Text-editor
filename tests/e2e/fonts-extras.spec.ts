@@ -40,17 +40,17 @@ test("font upload, dropdown, toggle, palette, and offline reload", async ({
 
   // Upload the fixture font through the font manager.
   await page.getByLabel("Font family").selectOption("@manage");
-  await expect(page.locator("dialog[open]")).toContainText("Fonts");
+  await expect(page.getByRole("dialog")).toContainText("Fonts");
   await page
     .locator('input[aria-label="Choose font file"]')
     .setInputFiles(FIXTURE_FONT);
-  await expect(page.locator("dialog[open]")).toContainText("TestFont");
+  await expect(page.getByRole("dialog")).toContainText("TestFont");
 
   // Reject an invalid file with a message, without closing the dialog.
   await page
     .locator('input[aria-label="Choose font file"]')
     .setInputFiles(FIXTURE_IMAGE);
-  await expect(page.locator("dialog[open] [role='alert']")).toContainText(
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
     /not a font|header/i,
   );
   await page.keyboard.press("Escape");
@@ -81,9 +81,7 @@ test("font upload, dropdown, toggle, palette, and offline reload", async ({
   await editor.click();
   await page.keyboard.press("End");
   await page.keyboard.press("ControlOrMeta+Shift+p");
-  await expect(page.locator("dialog[open]")).toContainText(
-    "Special characters",
-  );
+  await expect(page.getByRole("dialog")).toContainText("Special characters");
   await page.getByRole("button", { name: "Insert ¼", exact: true }).click();
   await expect(editor).toContainText("¼");
   await page.keyboard.press("Escape");
