@@ -6,7 +6,14 @@ import { sanitizePastedHTML } from "./pastePolicy";
 
 function makeEditor(onOpenLink: () => void = () => undefined): Editor {
   return new Editor({
-    extensions: createEditorExtensions({ shortcuts: { onOpenLink } }),
+    extensions: createEditorExtensions({
+      shortcuts: {
+        onOpenLink,
+        onOpenFind: () => undefined,
+        onToggleFont: () => undefined,
+        onOpenPalette: () => undefined,
+      },
+    }),
     content: "<p>hello</p>",
   });
 }

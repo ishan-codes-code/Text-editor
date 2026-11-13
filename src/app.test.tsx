@@ -16,10 +16,19 @@ describe("App", () => {
     resetDbForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     render(null, container);
     container.remove();
     localStorage.clear();
+    // Unmount kicks a best-effort autosave flush that the test cannot await
+    // (cleanup functions are synchronous). Serialize a no-op transaction
+    // behind it before the next test deletes the database: IndexedDB orders
+    // same-store transactions, so this resolves only after the in-flight
+    // write settles. Without the drain, `delete()` can close the handle
+    // mid-write and the flush rejects as an unhandled DatabaseClosedError.
+    const { getDb } = await import("./storage/db");
+    const db = getDb();
+    await db.transaction("r", db.tables, () => undefined);
   });
 
   it("boots a document, toolbar and canvas", async () => {
