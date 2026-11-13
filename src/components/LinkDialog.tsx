@@ -49,7 +49,7 @@ export function LinkDialog({
           />
         </label>
         <DialogFooter>
-          <DialogClose asChild>
+          <DialogClose>
             <Button variant="outline">Cancel</Button>
           </DialogClose>
           <Button onClick={onApply}>

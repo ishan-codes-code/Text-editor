@@ -40,7 +40,7 @@ export function DocsSheet(props: DocsSheetProps) {
           <DocList {...listProps} />
         </div>
         <div className="mt-4 flex justify-end">
-          <SheetClose asChild>
+          <SheetClose>
             <Button variant="outline">Close</Button>
           </SheetClose>
         </div>
