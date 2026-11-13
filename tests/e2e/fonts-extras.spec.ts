@@ -84,11 +84,24 @@ test("font upload, dropdown, toggle, palette, and offline reload", async ({
   );
 
   // The palette inserts the tapped glyph at the cursor in the active font.
-  // ¼ sits in the first row, so no scrolling is needed to tap it. Refocus
-  // and collapse the toggle's selection first: like typing, insertion
-  // replaces a selected range.
-  await editor.click();
-  await page.keyboard.press("End");
+  // ¼ sits in the first row, so no scrolling is needed to tap it. The insert
+  // replaces a selected range, so the toggle's full-range selection must be
+  // collapsed first. Neither gesture is reliable on the first try: the
+  // synthetic click does not always collapse under CSS zoom, and End can be
+  // lost while focus settles after the drawer unmounts. Retry the gesture
+  // until the selection is a cursor, so the insert appends instead of
+  // replacing "hindi".
+  let collapsed = false;
+  for (let attempt = 0; attempt < 5 && !collapsed; attempt++) {
+    await editor.click();
+    await page.keyboard.press("End");
+    const range = await page.evaluate(
+      () => (window as unknown as { __sel?: () => string }).__sel?.() ?? "",
+    );
+    const [from, to] = range.split("-");
+    collapsed = from !== "" && from === to;
+  }
+  expect(collapsed).toBe(true);
   await page.keyboard.press("ControlOrMeta+Shift+p");
   await expect(page.getByRole("dialog")).toContainText("Special characters");
   await page.getByRole("button", { name: "Insert ¼", exact: true }).click();
