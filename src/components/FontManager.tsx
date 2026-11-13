@@ -1,5 +1,6 @@
 import { Trash2, Upload } from "lucide-preact";
 import { useRef, useState } from "react";
+import { fontFamilyWithFallback } from "../lib/fontCss";
 import type { FontRecord } from "../storage";
 import { Button } from "./ui/button";
 import {
@@ -134,7 +135,7 @@ export function FontManager({
               >
                 <span
                   className="min-w-0 flex-1 truncate text-base"
-                  style={{ fontFamily: `"${font.family}", sans-serif` }}
+                  style={{ fontFamily: fontFamilyWithFallback(font.family) }}
                 >
                   {font.family}
                 </span>

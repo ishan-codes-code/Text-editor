@@ -6,7 +6,7 @@ import { CharacterCount } from "@tiptap/extension-character-count";
 import { CodeBlock } from "@tiptap/extension-code-block";
 import { Color } from "@tiptap/extension-color";
 import { Document } from "@tiptap/extension-document";
-import { FontFamily } from "@tiptap/extension-font-family";
+import { FontFamily as BaseFontFamily } from "@tiptap/extension-font-family";
 import { Heading } from "@tiptap/extension-heading";
 import { Highlight } from "@tiptap/extension-highlight";
 import { History } from "@tiptap/extension-history";
@@ -25,6 +25,7 @@ import { Text } from "@tiptap/extension-text";
 import { TextAlign } from "@tiptap/extension-text-align";
 import { FontSize, LineHeight, TextStyle } from "@tiptap/extension-text-style";
 import { Underline } from "@tiptap/extension-underline";
+import { quoteFontFamily } from "../lib/fontCss";
 import { ImageRef } from "./imageRef";
 import { Indent } from "./indent";
 import { PageBreak } from "./pageBreak";
@@ -34,6 +35,41 @@ import { AppShortcuts, type AppShortcutsOptions } from "./shortcuts";
 export interface EditorExtensionOptions {
   shortcuts: AppShortcutsOptions;
 }
+
+/**
+ * FontFamily with quoted rendering. The stock v3 extension emits
+ * `font-family: <name>` unquoted, which is invalid CSS for names containing
+ * digits (e.g. `Kruti Dev 010` — a bare `010` is not an identifier), so the
+ * browser drops the declaration and the text silently falls back. The stored
+ * attribute stays the plain family name; only the emitted style is quoted,
+ * and parseHTML strips one layer of quotes so pasted content round-trips.
+ */
+const FontFamily = BaseFontFamily.extend({
+  addGlobalAttributes() {
+    return [
+      {
+        types: this.options.types,
+        attributes: {
+          fontFamily: {
+            default: null,
+            parseHTML: (element) => {
+              const raw = element.style.fontFamily.trim();
+              if (raw === "") return null;
+              const unquoted = raw.replace(/^(['"])(.*)\1$/, "$2");
+              return unquoted.replace(/\\(.)/g, "$1") || null;
+            },
+            renderHTML: (attributes) => {
+              const family = (attributes as { fontFamily?: unknown })
+                .fontFamily;
+              if (typeof family !== "string" || family === "") return {};
+              return { style: `font-family: ${quoteFontFamily(family)}` };
+            },
+          },
+        },
+      },
+    ];
+  },
+});
 
 /**
  * The full phase-2 extension set, plus phase-5 extras that stay in the core

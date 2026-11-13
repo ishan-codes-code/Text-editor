@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { fontFamilyWithFallback } from "../lib/fontCss";
 import { PALETTE_GLYPHS } from "./paletteGlyphs";
 import { Button } from "./ui/button";
 import {
@@ -53,7 +54,7 @@ export function CharPalette({
             onClick={() => onInsert(glyph)}
             style={
               activeFamily !== null
-                ? { fontFamily: `"${activeFamily}", sans-serif` }
+                ? { fontFamily: fontFamilyWithFallback(activeFamily) }
                 : undefined
             }
             className="flex h-10 items-center justify-center rounded-md border border-border text-lg hover:bg-accent active:bg-accent"
