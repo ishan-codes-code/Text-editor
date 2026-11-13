@@ -69,7 +69,9 @@ function markState(marks: JSONContent["marks"]): BlockMarkState {
 }
 
 /** Inline nodes (text + marks) flattened into segments. */
-export function inlineSegments(content: JSONContent[] | undefined): InlineSegment[] {
+export function inlineSegments(
+  content: JSONContent[] | undefined,
+): InlineSegment[] {
   const out: InlineSegment[] = [];
   for (const node of content ?? []) {
     if (node.type === "hardBreak") {
@@ -166,9 +168,14 @@ function blockToMarkdown(node: JSONContent, lines: string[]): void {
     case "heading": {
       const level = Math.min(
         6,
-        Math.max(1, Number((node.attrs as { level?: unknown } | undefined)?.level ?? 1)),
+        Math.max(
+          1,
+          Number((node.attrs as { level?: unknown } | undefined)?.level ?? 1),
+        ),
       );
-      lines.push(`${"#".repeat(level)} ${segmentsToMarkdown(inlineSegments(node.content))}`);
+      lines.push(
+        `${"#".repeat(level)} ${segmentsToMarkdown(inlineSegments(node.content))}`,
+      );
       return;
     }
     case "paragraph": {
@@ -198,7 +205,11 @@ function blockToMarkdown(node: JSONContent, lines: string[]): void {
     }
     case "imageRef": {
       const id = (node.attrs as { imageId?: unknown } | undefined)?.imageId;
-      lines.push(typeof id === "string" && id !== "" ? `![image](image:${id})` : "![image]()");
+      lines.push(
+        typeof id === "string" && id !== ""
+          ? `![image](image:${id})`
+          : "![image]()",
+      );
       return;
     }
     case "bulletList":
@@ -251,7 +262,10 @@ export function jsonToMarkdown(doc: JSONContent): string {
   const lines: string[] = [];
   for (const node of doc.content ?? []) blockToMarkdown(node, lines);
   // Collapse 3+ blank runs to the canonical one blank line between blocks.
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+  return `${lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()}\n`;
 }
 
 function blockToPlainText(node: JSONContent, lines: string[]): void {
@@ -288,7 +302,8 @@ function blockToPlainText(node: JSONContent, lines: string[]): void {
       for (const item of node.content ?? []) {
         const prefix =
           node.type === "taskList"
-            ? (item.attrs as { checked?: unknown } | undefined)?.checked === true
+            ? (item.attrs as { checked?: unknown } | undefined)?.checked ===
+              true
               ? "[x] "
               : "[ ] "
             : node.type === "orderedList"
@@ -307,7 +322,9 @@ function blockToPlainText(node: JSONContent, lines: string[]): void {
     }
     case "table": {
       for (const row of node.content ?? []) {
-        const cells = (row.content ?? []).map((cell) => plainTextOf(cell.content));
+        const cells = (row.content ?? []).map((cell) =>
+          plainTextOf(cell.content),
+        );
         lines.push(cells.join("\t"));
       }
       return;
@@ -331,7 +348,10 @@ export function jsonToPlainText(doc: JSONContent): string {
 
 // ---- Import: text/markdown -> editor JSON ----
 
-function textNode(text: string, marks: JSONContent["marks"] = undefined): JSONContent {
+function textNode(
+  text: string,
+  marks: JSONContent["marks"] = undefined,
+): JSONContent {
   return marks === undefined || marks.length === 0
     ? { type: "text", text }
     : { type: "text", text, marks };
@@ -350,7 +370,9 @@ export function parseInlineMarkdown(source: string): JSONContent[] {
   const flush = (): void => {
     if (buffer === "") return;
     const marks: JSONContent["marks"] = stack.map((mark) =>
-      mark.attrs === undefined ? { type: mark.type } : { type: mark.type, attrs: mark.attrs },
+      mark.attrs === undefined
+        ? { type: mark.type }
+        : { type: mark.type, attrs: mark.attrs },
     );
     out.push(textNode(buffer, marks.length === 0 ? undefined : marks));
     buffer = "";
@@ -379,7 +401,9 @@ export function parseInlineMarkdown(source: string): JSONContent[] {
       }
       flush();
       const marks: JSONContent["marks"] = stack.map((mark) =>
-        mark.attrs === undefined ? { type: mark.type } : { type: mark.type, attrs: mark.attrs },
+        mark.attrs === undefined
+          ? { type: mark.type }
+          : { type: mark.type, attrs: mark.attrs },
       );
       marks.push({ type: "code" });
       out.push(textNode(source.slice(i + 1, end), marks));
@@ -389,16 +413,27 @@ export function parseInlineMarkdown(source: string): JSONContent[] {
     // Links [text](href).
     if (source[i] === "[") {
       const closeText = source.indexOf("]", i + 1);
-      const openHref = closeText === -1 ? -1 : source.indexOf("(", closeText + 1);
-      const closeHref = openHref === -1 ? -1 : source.indexOf(")", openHref + 1);
+      const openHref =
+        closeText === -1 ? -1 : source.indexOf("(", closeText + 1);
+      const closeHref =
+        openHref === -1 ? -1 : source.indexOf(")", openHref + 1);
       if (closeText !== -1 && openHref === closeText + 1 && closeHref !== -1) {
         flush();
-        stack.push({ type: "link", attrs: { href: source.slice(openHref + 1, closeHref) } });
+        stack.push({
+          type: "link",
+          attrs: { href: source.slice(openHref + 1, closeHref) },
+        });
         const inner = parseInlineMarkdown(source.slice(i + 1, closeText));
         stack.pop();
         // Re-mark inner nodes with the link (inner parser ran without it).
         for (const node of inner) {
-          const marks = [...(node.marks ?? []), { type: "link", attrs: { href: source.slice(openHref + 1, closeHref) } }];
+          const marks = [
+            ...(node.marks ?? []),
+            {
+              type: "link",
+              attrs: { href: source.slice(openHref + 1, closeHref) },
+            },
+          ];
           out.push(textNode(node.text ?? "", marks));
         }
         i = closeHref + 1;
@@ -470,17 +505,26 @@ function pushListItem(
   indent: number,
   item: JSONContent,
 ): void {
-  while (stack.length > 0 && (stack[stack.length - 1] as ListFrame).indent > indent) {
+  while (
+    stack.length > 0 &&
+    (stack[stack.length - 1] as ListFrame).indent > indent
+  ) {
     stack.pop();
   }
-  const parent = stack.length === 0 ? null : (stack[stack.length - 1] as ListFrame);
+  const parent =
+    stack.length === 0 ? null : (stack[stack.length - 1] as ListFrame);
   // A different list kind at the same level starts a sibling list; without
   // this, `- a` followed by `1. b` would nest the ordered list inside the
   // bullet item and break round-trips.
-  if (parent !== null && parent.indent === indent && parent.node.type !== kind) {
+  if (
+    parent !== null &&
+    parent.indent === indent &&
+    parent.node.type !== kind
+  ) {
     stack.pop();
   }
-  const target = stack.length === 0 ? null : (stack[stack.length - 1] as ListFrame);
+  const target =
+    stack.length === 0 ? null : (stack[stack.length - 1] as ListFrame);
   if (
     target !== null &&
     target.node.type === kind &&
@@ -502,10 +546,12 @@ function pushListItem(
 }
 
 function isTableSeparator(line: string): boolean {
-  const cells = line.trim().replace(/^\||\|$/g, "").split("|");
+  const cells = line
+    .trim()
+    .replace(/^\||\|$/g, "")
+    .split("|");
   return (
-    cells.length > 0 &&
-    cells.every((cell) => /^:?-+:?$/.test(cell.trim()))
+    cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()))
   );
 }
 
@@ -544,7 +590,10 @@ export function markdownToJson(markdown: string): JSONContent {
 
     if (trimmed.startsWith("```")) {
       if (inCode) {
-        top.push({ type: "codeBlock", content: [{ type: "text", text: codeLines.join("\n") }] });
+        top.push({
+          type: "codeBlock",
+          content: [{ type: "text", text: codeLines.join("\n") }],
+        });
         codeLines = [];
         inCode = false;
       } else {
@@ -573,7 +622,10 @@ export function markdownToJson(markdown: string): JSONContent {
       index += 1;
       continue;
     }
-    if (trimmed === '<div data-page-break=""></div>' || trimmed === "<div data-page-break></div>") {
+    if (
+      trimmed === '<div data-page-break=""></div>' ||
+      trimmed === "<div data-page-break></div>"
+    ) {
       flushParagraph();
       closeLists();
       top.push({ type: "pageBreak" });
@@ -584,10 +636,12 @@ export function markdownToJson(markdown: string): JSONContent {
     if (heading !== null) {
       flushParagraph();
       closeLists();
+      const levelText = heading[1] ?? "#";
+      const body = heading[2] ?? "";
       top.push({
         type: "heading",
-        attrs: { level: heading[1].length },
-        content: parseInlineMarkdown(heading[2]),
+        attrs: { level: levelText.length },
+        content: parseInlineMarkdown(body),
       });
       index += 1;
       continue;
@@ -628,19 +682,23 @@ export function markdownToJson(markdown: string): JSONContent {
     if (quote !== null) {
       flushParagraph();
       closeLists();
-      const inner = markdownToJson(quote[1]);
-      top.push({ type: "blockquote", content: inner.content ?? [paragraphNode(quote[1])] });
+      const quoted = quote[1] ?? "";
+      const inner = markdownToJson(quoted);
+      top.push({
+        type: "blockquote",
+        content: inner.content ?? [paragraphNode(quoted)],
+      });
       index += 1;
       continue;
     }
     const task = /^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)$/.exec(line);
     if (task !== null) {
       flushParagraph();
-      const indent = Math.floor(task[1].length / 2);
+      const indent = Math.floor((task[1] ?? "").length / 2);
       pushListItem(listStack, top, "taskList", indent, {
         type: "taskItem",
-        attrs: { checked: task[2].toLowerCase() === "x" },
-        content: [paragraphNode(task[3])],
+        attrs: { checked: (task[2] ?? " ").toLowerCase() === "x" },
+        content: [paragraphNode(task[3] ?? "")],
       });
       index += 1;
       continue;
@@ -648,10 +706,10 @@ export function markdownToJson(markdown: string): JSONContent {
     const ordered = /^(\s*)\d+[.)]\s+(.*)$/.exec(line);
     if (ordered !== null) {
       flushParagraph();
-      const indent = Math.floor(ordered[1].length / 2);
+      const indent = Math.floor((ordered[1] ?? "").length / 2);
       pushListItem(listStack, top, "orderedList", indent, {
         type: "listItem",
-        content: [paragraphNode(ordered[2])],
+        content: [paragraphNode(ordered[2] ?? "")],
       });
       index += 1;
       continue;
@@ -659,10 +717,10 @@ export function markdownToJson(markdown: string): JSONContent {
     const bullet = /^(\s*)[-*+]\s+(.*)$/.exec(line);
     if (bullet !== null) {
       flushParagraph();
-      const indent = Math.floor(bullet[1].length / 2);
+      const indent = Math.floor((bullet[1] ?? "").length / 2);
       pushListItem(listStack, top, "bulletList", indent, {
         type: "listItem",
-        content: [paragraphNode(bullet[2])],
+        content: [paragraphNode(bullet[2] ?? "")],
       });
       index += 1;
       continue;
@@ -672,7 +730,7 @@ export function markdownToJson(markdown: string): JSONContent {
     if (image !== null) {
       flushParagraph();
       closeLists();
-      top.push({ type: "imageRef", attrs: { imageId: image[1] } });
+      top.push({ type: "imageRef", attrs: { imageId: image[1] ?? "" } });
       index += 1;
       continue;
     }
@@ -682,7 +740,8 @@ export function markdownToJson(markdown: string): JSONContent {
   }
   flushParagraph();
 
-  if (top.length === 0) return { type: "doc", content: [{ type: "paragraph" }] };
+  if (top.length === 0)
+    return { type: "doc", content: [{ type: "paragraph" }] };
   return { type: "doc", content: top };
 }
 
@@ -700,7 +759,10 @@ export function textToJson(text: string): JSONContent {
         .filter((line) => line !== "")
         .join(" ");
       if (merged !== "")
-        content.push({ type: "paragraph", content: [{ type: "text", text: merged }] });
+        content.push({
+          type: "paragraph",
+          content: [{ type: "text", text: merged }],
+        });
     }
     if (chunkIndex < chunks.length - 1) content.push({ type: "pageBreak" });
   });

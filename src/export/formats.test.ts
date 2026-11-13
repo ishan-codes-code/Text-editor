@@ -11,7 +11,11 @@ import {
 const richDoc: JSONContent = {
   type: "doc",
   content: [
-    { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Title" }] },
+    {
+      type: "heading",
+      attrs: { level: 2 },
+      content: [{ type: "text", text: "Title" }],
+    },
     {
       type: "paragraph",
       content: [
@@ -31,14 +35,29 @@ const richDoc: JSONContent = {
     {
       type: "bulletList",
       content: [
-        { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "one" }] }] },
-        { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "two" }] }] },
+        {
+          type: "listItem",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "one" }] },
+          ],
+        },
+        {
+          type: "listItem",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "two" }] },
+          ],
+        },
       ],
     },
     {
       type: "orderedList",
       content: [
-        { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "first" }] }] },
+        {
+          type: "listItem",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "first" }] },
+          ],
+        },
       ],
     },
     {
@@ -47,7 +66,9 @@ const richDoc: JSONContent = {
         {
           type: "taskItem",
           attrs: { checked: true },
-          content: [{ type: "paragraph", content: [{ type: "text", text: "done" }] }],
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "done" }] },
+          ],
         },
       ],
     },
@@ -58,21 +79,46 @@ const richDoc: JSONContent = {
         {
           type: "tableRow",
           content: [
-            { type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "A" }] }] },
-            { type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: "B" }] }] },
+            {
+              type: "tableHeader",
+              content: [
+                { type: "paragraph", content: [{ type: "text", text: "A" }] },
+              ],
+            },
+            {
+              type: "tableHeader",
+              content: [
+                { type: "paragraph", content: [{ type: "text", text: "B" }] },
+              ],
+            },
           ],
         },
         {
           type: "tableRow",
           content: [
-            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "1" }] }] },
-            { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: "2" }] }] },
+            {
+              type: "tableCell",
+              content: [
+                { type: "paragraph", content: [{ type: "text", text: "1" }] },
+              ],
+            },
+            {
+              type: "tableCell",
+              content: [
+                { type: "paragraph", content: [{ type: "text", text: "2" }] },
+              ],
+            },
           ],
         },
       ],
     },
     { type: "horizontalRule" },
-    { type: "blockquote", content: [{ type: "paragraph", content: [{ type: "text", text: "quoted" }] }] },
+    {
+      type: "blockquote",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "quoted" }] },
+      ],
+    },
     { type: "codeBlock", content: [{ type: "text", text: "const x = 1;" }] },
   ],
 };
@@ -118,7 +164,9 @@ describe("markdown converters", () => {
   it("exports headings, marks, lists, tables, breaks and code", () => {
     const md = jsonToMarkdown(richDoc);
     expect(md).toContain("## Title");
-    expect(md).toContain("Hello **bold** and *italic* plus [link](https://example.com).");
+    expect(md).toContain(
+      "Hello **bold** and *italic* plus [link](https://example.com).",
+    );
     expect(md).toContain("- one");
     expect(md).toContain("1. first");
     expect(md).toContain("- [x] done");
@@ -141,12 +189,19 @@ describe("markdown converters", () => {
     expect(texts).toContain("bold and ");
     expect(texts).toContain("both");
     const both = nodes.find((node) => node.text === "both");
-    expect(both?.marks?.map((mark) => mark.type).sort()).toEqual(["bold", "italic"]);
-    expect(nodes.find((node) => node.text === "code")?.marks).toMatchObject([{ type: "code" }]);
+    expect(both?.marks?.map((mark) => mark.type).sort()).toEqual([
+      "bold",
+      "italic",
+    ]);
+    expect(nodes.find((node) => node.text === "code")?.marks).toMatchObject([
+      { type: "code" },
+    ]);
   });
 
   it("imports headings, quotes, code, tables and task lists", () => {
-    const doc = markdownToJson("# H\n\n> q\n\n- [ ] todo\n\n| A |\n| --- |\n| 1 |\n");
+    const doc = markdownToJson(
+      "# H\n\n> q\n\n- [ ] todo\n\n| A |\n| --- |\n| 1 |\n",
+    );
     const types = (doc.content ?? []).map((node) => node.type);
     expect(types).toEqual(["heading", "blockquote", "taskList", "table"]);
   });
