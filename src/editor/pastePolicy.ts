@@ -5,6 +5,7 @@
  * plain text natively (the browser only offers text/plain), so no code is
  * needed for that path.
  */
+import { quoteFontFamily } from "../lib/fontCss";
 
 export interface PastePolicyOptions {
   /** Families registered in the font store (case-insensitive match). */
@@ -134,7 +135,9 @@ export function sanitizePastedHTML(
           const allowed = familyAllowed(value, knownFamilies);
           if (allowed !== null) {
             fontFamily = allowed;
-            kept.push(`font-family: ${allowed}`);
+            // Quote so digit/space names stay valid CSS (same helper as the
+            // editor's own rendering); the stored mark keeps the plain name.
+            kept.push(`font-family: ${quoteFontFamily(allowed)}`);
           }
         } else if (prop === "font-size") {
           hasFontSize = true;

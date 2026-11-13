@@ -1,5 +1,6 @@
 import { Editor } from "@tiptap/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { quoteFontFamily } from "../lib/fontCss";
 import { createEditorExtensions } from "./extensions";
 import { MAX_INDENT_LEVEL } from "./indent";
 import { sanitizePastedHTML } from "./pastePolicy";
@@ -85,6 +86,34 @@ describe("editor extensions", () => {
     expect(editor.getHTML()).toContain('data-page-break=""');
   });
 
+  it("serializes digit/space font names quoted so the CSS stays valid", () => {
+    const editor = track();
+    editor.commands.setContent("<p>hindi</p>");
+    editor.commands.selectAll();
+    expect(editor.commands.setFontFamily("Test 010")).toBe(true);
+    // The stored attribute stays the plain family name.
+    expect(
+      (editor.getAttributes("textStyle") as { fontFamily?: string }).fontFamily,
+    ).toBe("Test 010");
+    const html = editor.getHTML();
+    expect(html).toContain("Test 010");
+    expect(html).toMatch(/font-family: (&quot;|")Test 010(&quot;|")/);
+    // The browser keeps a quoted declaration and drops a bare one (this is
+    // the reported bug: unquoted `010` invalidated the whole declaration).
+    const kept = document.createElement("span");
+    kept.setAttribute("style", `font-family: ${quoteFontFamily("Test 010")}`);
+    expect(kept.style.fontFamily).toContain("Test 010");
+    const dropped = document.createElement("span");
+    dropped.setAttribute("style", "font-family: Test 010");
+    expect(dropped.style.fontFamily).toBe("");
+    // Round-trip through parseHTML preserves the plain name.
+    editor.commands.setContent(html);
+    editor.commands.selectAll();
+    expect(
+      (editor.getAttributes("textStyle") as { fontFamily?: string }).fontFamily,
+    ).toBe("Test 010");
+  });
+
   it("toggles marks and alignment through commands", () => {
     const editor = track();
     editor.commands.setContent("<p>hello</p>");
@@ -147,6 +176,14 @@ describe("paste policy", () => {
     expect(out).toContain('<a href="https://example.com">link</a>');
     expect(out).toContain("<h2>head</h2>");
     expect(out).toContain("<li>one</li>");
+  });
+
+  it("quotes kept font families so digit names survive pasting", () => {
+    const out = sanitizePastedHTML('<p style="font-family: Test 010">x</p>', {
+      knownFamilies: ["test 010"],
+      keepColors: false,
+    });
+    expect(out).toMatch(/font-family: (&quot;|")Test 010(&quot;|")/);
   });
 
   it("drops foreign fonts and sizes, keeps known families", () => {

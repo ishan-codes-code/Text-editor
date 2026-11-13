@@ -52,6 +52,13 @@ describe("font validation", () => {
     expect(readFontFamily(fixtureBytes())).toBe("TestFont");
   });
 
+  it("reads the digit/space family from the renamed fixture", () => {
+    const bytes = new Uint8Array(
+      readFileSync(resolve("tests/fixtures/TestFont010.ttf")),
+    );
+    expect(readFontFamily(bytes)).toBe("Test 010");
+  });
+
   it("sniffs ttf from the sfnt version", () => {
     expect(sniffFontFormat(fixtureBytes())).toBe("ttf");
   });
@@ -141,8 +148,9 @@ describe("font registration", () => {
       configurable: true,
     });
     try {
-      const families = await registerStoredFonts(db);
-      expect(families).toEqual(["TestFont"]);
+      const { loaded, failed } = await registerStoredFonts(db);
+      expect(loaded).toEqual(["TestFont"]);
+      expect(failed).toEqual([]);
       expect(added).toHaveLength(1);
       // The source must be an ArrayBuffer, never a Blob (FontFace rejects
       // it). `instanceof` fails across vm realms, so check structurally.
@@ -165,6 +173,45 @@ describe("font registration", () => {
       await expect(registerFontFace("TestFont", fontBlob())).resolves.toBe(
         false,
       );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reports stored fonts that fail to load instead of failing silently", async () => {
+    await addFont(fontBlob(), db);
+    const failingFace = function (this: unknown) {
+      return {
+        load: () => Promise.reject(new Error("corrupt tables")),
+      };
+    };
+    vi.stubGlobal("FontFace", failingFace);
+    try {
+      const { loaded, failed } = await registerStoredFonts(db);
+      expect(loaded).toEqual([]);
+      expect(failed).toEqual(["TestFont"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not list an upload that fails to load, and names it", async () => {
+    const failingFace = function (this: unknown) {
+      return {
+        load: () => Promise.reject(new Error("corrupt tables")),
+      };
+    };
+    const faces = { add: () => undefined };
+    vi.stubGlobal("FontFace", failingFace);
+    Object.defineProperty(document, "fonts", {
+      value: faces,
+      configurable: true,
+    });
+    try {
+      await expect(addFont(fontBlob(), db)).rejects.toThrow(
+        /"TestFont" could not be loaded/,
+      );
+      expect(await listFonts(db)).toHaveLength(0);
     } finally {
       vi.unstubAllGlobals();
     }

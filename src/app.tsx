@@ -372,7 +372,15 @@ export function App() {
     const boot = async () => {
       // Register uploaded fonts BEFORE rendering any document that uses
       // them, so there is no wrong-glyph flash (and offline reloads render).
-      await registerStoredFonts();
+      // Load failures used to be silent; name them so the user re-adds the
+      // file instead of staring at fallback glyphs.
+      const { failed: failedFonts } = await registerStoredFonts();
+      if (cancelled) return;
+      if (failedFonts.length > 0) {
+        toast("Some fonts could not load", {
+          description: `${failedFonts.join(", ")} — text in these fonts falls back until the file is re-added.`,
+        });
+      }
       const [
         lastOpened,
         storedZoom,
