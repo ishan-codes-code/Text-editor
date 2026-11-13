@@ -62,9 +62,26 @@ export default defineConfig({
       },
     }),
   ],
-  // Pin IPv4 loopback so the dev server matches the Playwright baseURL
-  // (http://127.0.0.1:5173) on machines where "localhost" resolves to ::1.
+  // Pin validated names so `size-limit` can tell core JS apart from heavy
+  // lazy chunks, and so the precache manifest is easy to audit. Async chunks
+  // (dialogs, tables, export/import, vendor libs) use chunkFileNames, so the
+  // size budget measures the startup entry only, per the TRD core-JS budget.
+  build: {
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/entry-[hash].js",
+        chunkFileNames: "assets/chunk-[name]-[hash].js",
+        manualChunks: (id) => {
+          if (id.includes("node_modules/docx/")) return "vendor-docx";
+          if (id.includes("node_modules/mammoth/")) return "vendor-mammoth";
+          return undefined;
+        },
+      },
+    },
+  },
   server: {
+    // Pin IPv4 loopback so the dev server matches the Playwright baseURL
+    // (http://127.0.0.1:5173) on machines where "localhost" resolves to ::1.
     host: "127.0.0.1",
     port: 5173,
   },

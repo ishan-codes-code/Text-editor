@@ -7,6 +7,7 @@ import { expect, type Page, test } from "@playwright/test";
  */
 
 const FIXTURE_FONT = "tests/fixtures/TestFont.ttf";
+const FIXTURE_FONT_010 = "tests/fixtures/TestFont010.ttf";
 const FIXTURE_IMAGE = "tests/fixtures/test-image.png";
 
 /** Offline reloads need the service worker activated and controlling. */
@@ -155,4 +156,38 @@ test("offline table insert, image insert, find and replace", async ({
   await expect(offlineEditor).toContainText("gamma beta gamma");
   await page.keyboard.press("Escape");
   await expect(findBar).toBeHidden();
+});
+
+test("digit/space font names render: upload, select, computed style", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const editor = page.locator('[aria-label="Editor"] .tiptap');
+  await expect(editor).toBeVisible();
+  await editor.click();
+
+  // Upload the renamed fixture (internal family "Test 010") through the
+  // font manager: upload validation reads the name table, not the filename.
+  await page.getByLabel("Font family").selectOption("@manage");
+  await expect(page.locator("dialog[open]")).toContainText("Fonts");
+  await page
+    .locator('input[aria-label="Choose font file"]')
+    .setInputFiles(FIXTURE_FONT_010);
+  await expect(page.locator("dialog[open]")).toContainText("Test 010");
+  await page.keyboard.press("Escape");
+
+  // Select the digit-named font and type: the declaration must survive as
+  // valid CSS (unquoted `010` invalidated it and the browser fell back).
+  await page.keyboard.type("digitfont");
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.getByLabel("Font family").selectOption("Test 010");
+  const span = editor.locator("span[style*='Test 010']");
+  await expect(span).toContainText("digitfont");
+  await expect(
+    page.evaluate(() => document.fonts.check('16px "Test 010"')),
+  ).resolves.toBe(true);
+  const computed = await span.evaluate(
+    (node) => getComputedStyle(node).fontFamily,
+  );
+  expect(computed).toContain("Test 010");
 });

@@ -246,6 +246,67 @@
   }
 }
 
+/* PDF output (TRD: print stylesheet + window.print, zero bundle weight).
+   Manual page breaks become real page breaks; tables, images, quotes and
+   headings never strand across pages. */
+@page {
+  size: A4;
+  margin: 16mm 14mm;
+}
+
+@media print {
+  body {
+    background: #fff;
+    color: #000;
+  }
+
+  main {
+    background: #fff;
+    padding: 0;
+  }
+
+  main > div {
+    max-width: none;
+  }
+
+  main section {
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+    max-width: none;
+  }
+
+  .tiptap {
+    min-height: auto;
+    color: #000;
+  }
+
+  .tiptap table,
+  .tiptap img,
+  .tiptap blockquote,
+  .tiptap pre {
+    break-inside: avoid;
+  }
+
+  .tiptap h1,
+  .tiptap h2,
+  .tiptap h3,
+  .tiptap h4,
+  .tiptap h5,
+  .tiptap h6 {
+    break-after: avoid;
+  }
+
+  .tiptap a {
+    color: inherit;
+    text-decoration: underline;
+  }
+
+  .page-break {
+    break-after: page;
+  }
+}
+
 /* Native dialog / popover surfaces share the card treatment. */
 dialog.ui-surface::backdrop {
   background-color: rgb(0 0 0 / 0.5);

@@ -1,5 +1,6 @@
 import { Copy, FilePlus, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { quoteFontFamily } from "../lib/fontCss";
 import type { DocListItem } from "../storage/documents";
 import { Button } from "./ui/button";
 
@@ -90,7 +91,7 @@ export function DocList({
                     className="block truncate text-sm font-medium"
                     style={
                       doc.titleFont != null
-                        ? { fontFamily: doc.titleFont }
+                        ? { fontFamily: quoteFontFamily(doc.titleFont) }
                         : undefined
                     }
                   >

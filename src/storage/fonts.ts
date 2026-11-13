@@ -187,7 +187,22 @@ export async function addFont(
   await db.transaction("rw", db.fonts, async () => {
     await db.fonts.add(record);
   });
-  await registerFontFace(family, record.blob);
+  // A file can pass validation yet fail to load on the device (truncated or
+  // corrupt tables the name reader tolerates). Never list such a font as
+  // usable: remove the stored row and name the font in the error so the UI
+  // can toast it. Where the FontFace API is unavailable there is nothing to
+  // verify, so the font stays listed as before.
+  if (fontFaceAvailable()) {
+    const loaded = await registerFontFace(family, record.blob);
+    if (!loaded) {
+      await db.transaction("rw", db.fonts, async () => {
+        await db.fonts.delete(record.id);
+      });
+      throw new FontValidationError(
+        `"${family}" could not be loaded on this device, so it was not added.`,
+      );
+    }
+  }
   return record;
 }
 
@@ -213,22 +228,34 @@ export async function deleteFont(
 }
 
 /**
+ * Whether the FontFace API exists here (older WebViews, jsdom tests).
+ * Extracted so callers can distinguish "cannot verify" from "load failed".
+ */
+export function fontFaceAvailable(): boolean {
+  const faces = (document as Document & { fonts?: FontFaceSet }).fonts;
+  const Face = (window as Window & { FontFace?: typeof FontFace }).FontFace;
+  return faces !== undefined && Face !== undefined;
+}
+
+/**
  * Registers one font with the document. `FontFace` takes an `ArrayBuffer`
  * source — never a Blob — and `font-display` does not apply to such faces.
- * No-op where the FontFace API is unavailable (older WebViews, jsdom tests).
+ * Returns false instead of throwing: `addFont` turns a load failure into a
+ * named error, and startup collects failures for one summary toast.
  */
 export async function registerFontFace(
   family: string,
   blob: Blob,
 ): Promise<boolean> {
   try {
+    if (!fontFaceAvailable()) return false;
     const faces = (document as Document & { fonts?: FontFaceSet }).fonts;
-    const Face = (window as Window & { FontFace?: typeof FontFace }).FontFace;
-    if (faces === undefined || Face === undefined) return false;
+    const Face = (window as Window & { FontFace?: typeof FontFace })
+      .FontFace as typeof FontFace;
     const buf = await blob.arrayBuffer();
     const face = new Face(family, buf);
     await face.load();
-    faces.add(face);
+    faces?.add(face);
     return true;
   } catch {
     return false;
@@ -238,13 +265,19 @@ export async function registerFontFace(
 /**
  * Registers every stored font at startup. Await this before rendering a
  * document that uses custom fonts so there is no wrong-glyph flash.
+ * Corrupt-but-stored fonts used to fail silently; they are now reported so
+ * the UI can toast them by name.
  */
 export async function registerStoredFonts(
   db: EditorDatabase = getDb(),
-): Promise<string[]> {
+): Promise<{ loaded: string[]; failed: string[] }> {
   const fonts = await listFonts(db);
+  const loaded: string[] = [];
+  const failed: string[] = [];
   for (const font of fonts) {
-    await registerFontFace(font.family, font.blob);
+    if (await registerFontFace(font.family, font.blob))
+      loaded.push(font.family);
+    else failed.push(font.family);
   }
-  return fonts.map((font) => font.family);
+  return { loaded, failed };
 }

@@ -68,6 +68,11 @@ const OverlayHost = lazy(() =>
     default: module.OverlayHost,
   })),
 );
+const ExportSheet = lazy(() =>
+  import("./components/ExportSheet").then((module) => ({
+    default: module.ExportSheet,
+  })),
+);
 
 const BACKUP_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const ZOOM_OPTIONS = ["fit", "0.5", "0.75", "1", "1.25", "1.5", "2"];
@@ -836,6 +841,14 @@ export function App() {
           >
             <FileText className="size-4" /> Docs
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label="Export or import"
+            onClick={() => setExportOpen(true)}
+          >
+            <Download className="size-4" /> Export
+          </Button>
           <h1 className="truncate text-base font-semibold">
             {docs.find((doc) => doc.id === activeId)?.title ??
               "Offline text editor"}
@@ -977,6 +990,23 @@ export function App() {
       <Suspense fallback={null}>
         <OverlayHost />
       </Suspense>
+
+      {exportOpen && (
+        <Suspense fallback={null}>
+          <ExportSheet
+            open={exportOpen}
+            onOpenChange={setExportOpen}
+            docTitle={
+              docs.find((doc) => doc.id === activeId)?.title ?? "document"
+            }
+            busy={exportBusy}
+            onExport={(format) => void handleExport(format)}
+            importFileRef={importFileRef}
+            onImportClick={() => importFileRef.current?.click()}
+            onImportFile={(file) => void handleImportFile(file)}
+          />
+        </Suspense>
+      )}
 
       <Toaster />
     </div>

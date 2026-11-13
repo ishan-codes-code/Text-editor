@@ -1,5 +1,6 @@
 import { strToU8, Zip, ZipPassThrough } from "fflate";
 import * as v from "valibot";
+import { deliverFile } from "../export/deliver";
 import { blobToBytes } from "./blob";
 import { type EditorDatabase, getDb } from "./db";
 import {
@@ -184,43 +185,14 @@ export function backupFileName(at: number = now()): string {
 }
 
 /**
- * Hands a Blob to the user. The File System Access save picker is not
- * available on Android Chrome, so this uses `<a download>` and the Web Share
- * API with files where supported.
+ * Hands a backup Blob to the user (single implementation in
+ * `src/export/deliver.ts`, shared with document exports).
  */
 export async function deliverBackup(
   blob: Blob,
   filename: string,
 ): Promise<"download" | "share"> {
-  const file = new File([blob], filename, { type: "application/zip" });
-  const nav = navigator as Navigator & {
-    canShare?: (data: { files: File[] }) => boolean;
-    share?: (data: { files: File[]; title?: string }) => Promise<void>;
-  };
-  if (typeof nav.canShare === "function" && typeof nav.share === "function") {
-    try {
-      if (nav.canShare({ files: [file] })) {
-        await nav.share({ files: [file], title: filename });
-        return "share";
-      }
-    } catch {
-      // User dismissed the sheet or share failed: fall through to download.
-    }
-  }
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    // Revoke on a later tick; revoking synchronously can cancel the fetch
-    // of the blob URL in some browsers.
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  }
-  return "download";
+  return deliverFile(blob, filename, "application/zip");
 }
 
 /** Records a successful backup time for the "back up now" banner logic. */

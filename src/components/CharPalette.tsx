@@ -64,7 +64,7 @@ export function PalettePanel({ activeFamily, onInsert }: PalettePanelProps) {
             onClick={() => handleInsert(glyph)}
             style={
               activeFamily !== null
-                ? { fontFamily: `"${activeFamily}", sans-serif` }
+                ? { fontFamily: fontFamilyWithFallback(activeFamily) }
                 : undefined
             }
             className="flex h-11 items-center justify-center rounded-md border border-border text-lg hover:bg-accent active:bg-accent"
