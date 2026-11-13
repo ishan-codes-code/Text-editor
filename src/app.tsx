@@ -1,5 +1,12 @@
 import type { Editor } from "@tiptap/core";
-import { FileText, Moon, RefreshCw, Settings, Sun } from "lucide-react";
+import {
+  Download,
+  FileText,
+  Moon,
+  RefreshCw,
+  Settings,
+  Sun,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 import {
   lazy,
@@ -13,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { PalettePanel } from "./components/CharPalette";
 import { DocsPanel } from "./components/DocsSheet";
+import { type ExportFormat, ExportPanel } from "./components/ExportSheet";
 import { FindBar } from "./components/FindBar";
 import { FontPanel } from "./components/FontManager";
 import { LinkForm } from "./components/LinkDialog";
@@ -27,6 +35,7 @@ import {
   resolveOpenContent,
   setContentWhenReady,
 } from "./editor/applyContent";
+import { sanitizePastedHTML } from "./editor/pastePolicy";
 import { useTiptapEditor } from "./hooks/useTiptapEditor";
 import { useOverlayStore } from "./overlays/store";
 import { ensurePersistentStorage, initPwa } from "./pwa";
@@ -68,11 +77,6 @@ const OverlayHost = lazy(() =>
     default: module.OverlayHost,
   })),
 );
-const ExportSheet = lazy(() =>
-  import("./components/ExportSheet").then((module) => ({
-    default: module.ExportSheet,
-  })),
-);
 
 const BACKUP_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const ZOOM_OPTIONS = ["fit", "0.5", "0.75", "1", "1.25", "1.5", "2"];
@@ -111,6 +115,7 @@ export function App() {
     withReplace: boolean;
   }>({ open: false, withReplace: false });
   const [lastBackup, setLastBackup] = useState<number | null>(null);
+  const [exportBusy, setExportBusy] = useState<string | null>(null);
 
   const pwa = useMemo(() => initPwa(), []);
   const autosaveRef = useRef<SaveQueue | null>(null);
@@ -120,6 +125,7 @@ export function App() {
   const editorRef = useRef<Editor | null>(null);
   const lastSnapshotCheckRef = useRef(0);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
   const canvasWrapRef = useRef<HTMLElement | null>(null);
   const docsRef = useRef<DocListItem[]>([]);
   docsRef.current = docs;
@@ -748,6 +754,139 @@ export function App() {
     });
   }, [handleInsertGlyph]);
 
+  const exportBusyRef = useRef<string | null>(null);
+  exportBusyRef.current = exportBusy;
+
+  const handleExport = useCallback(async (format: ExportFormat) => {
+    const current = editorRef.current;
+    if (
+      current === null ||
+      current.isDestroyed ||
+      activeIdRef.current === null
+    ) {
+      toast("Nothing to export", {
+        description: "Open a document first.",
+      });
+      return;
+    }
+    // PDF costs nothing in bundle size: the print stylesheet does the work.
+    if (format === "pdf") {
+      useOverlayStore.getState().closeOverlay("export");
+      window.print();
+      return;
+    }
+    setExportBusy(format);
+    try {
+      await autosaveRef.current?.flush();
+      const json = current.getJSON();
+      const title =
+        docsRef.current.find((doc) => doc.id === activeIdRef.current)?.title ??
+        "document";
+      if (format === "txt" || format === "md") {
+        const { jsonToMarkdown, jsonToPlainText } = await import(
+          "./export/formats"
+        );
+        const { deliverFile, exportFileName } = await import(
+          "./export/deliver"
+        );
+        const text =
+          format === "txt" ? jsonToPlainText(json) : jsonToMarkdown(json);
+        const mime = format === "txt" ? "text/plain" : "text/markdown";
+        await deliverFile(
+          new Blob([text], { type: `${mime};charset=utf-8` }),
+          exportFileName(title, format),
+          mime,
+        );
+      } else {
+        const { jsonToDocxBlob } = await import("./export/docxExport");
+        const { deliverFile, exportFileName } = await import(
+          "./export/deliver"
+        );
+        const blob = await jsonToDocxBlob(json, {
+          defaultFont:
+            defaultFontRef.current === "" ? undefined : defaultFontRef.current,
+        });
+        await deliverFile(
+          blob,
+          exportFileName(title, "docx"),
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        );
+      }
+      toast("Export ready", {
+        description: "Choose where to save your file.",
+      });
+    } catch {
+      toast("Export failed", {
+        description: "Try again; your document is still safe.",
+      });
+    } finally {
+      setExportBusy(null);
+    }
+  }, []);
+
+  const handleImportFile = useCallback(
+    async (file: File) => {
+      setExportBusy("import");
+      try {
+        const { importFile, titleForImport } = await import("./export/import");
+        const result = await importFile(file);
+        const doc = await createDoc(titleForImport(file.name));
+        await openDoc(doc.id);
+        const current = editorRef.current;
+        if (result.kind === "json") {
+          current?.commands.setContent(result.content);
+        } else {
+          // DOCX via mammoth: the paste policy + schema apply, fonts match
+          // by name where the family is in the font store.
+          current?.commands.setContent(
+            sanitizePastedHTML(result.html, {
+              knownFamilies: fontsRef.current.map((font) => font.family),
+              keepColors: keepColorsRef.current,
+            }),
+          );
+        }
+        await autosaveRef.current?.flush();
+        await refreshDocs();
+        toast("Import complete", {
+          description: `"${doc.title}" was created from ${file.name}.`,
+        });
+      } catch (error) {
+        toast("Import failed", {
+          description:
+            error instanceof Error
+              ? error.message
+              : "That file could not be imported.",
+        });
+      } finally {
+        setExportBusy(null);
+      }
+    },
+    [openDoc, refreshDocs],
+  );
+
+  const openExport = useCallback(() => {
+    const title =
+      docsRef.current.find((doc) => doc.id === activeIdRef.current)?.title ??
+      "document";
+    useOverlayStore.getState().openOverlay({
+      id: "export",
+      kind: "sheet",
+      side: "right",
+      title: "Export and import",
+      description: `Export "${title}" or import a file as a new document. Everything works offline.`,
+      render: () => (
+        <ExportPanel
+          docTitle={title}
+          busy={exportBusyRef.current}
+          onExport={(format) => void handleExport(format)}
+          importFileRef={importFileRef}
+          onImportClick={() => importFileRef.current?.click()}
+          onImportFile={(file) => void handleImportFile(file)}
+        />
+      ),
+    });
+  }, [handleExport, handleImportFile]);
+
   const backupStale =
     lastBackup !== null && Date.now() - lastBackup > BACKUP_STALE_MS;
   const neverBackedUp = lastBackup === null;
@@ -844,8 +983,9 @@ export function App() {
           <Button
             variant="outline"
             size="sm"
+            className="h-11"
             aria-label="Export or import"
-            onClick={() => setExportOpen(true)}
+            onClick={() => openExport()}
           >
             <Download className="size-4" /> Export
           </Button>
@@ -990,23 +1130,6 @@ export function App() {
       <Suspense fallback={null}>
         <OverlayHost />
       </Suspense>
-
-      {exportOpen && (
-        <Suspense fallback={null}>
-          <ExportSheet
-            open={exportOpen}
-            onOpenChange={setExportOpen}
-            docTitle={
-              docs.find((doc) => doc.id === activeId)?.title ?? "document"
-            }
-            busy={exportBusy}
-            onExport={(format) => void handleExport(format)}
-            importFileRef={importFileRef}
-            onImportClick={() => importFileRef.current?.click()}
-            onImportFile={(file) => void handleImportFile(file)}
-          />
-        </Suspense>
-      )}
 
       <Toaster />
     </div>

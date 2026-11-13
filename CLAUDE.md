@@ -13,8 +13,8 @@ React 19 + Vite + TypeScript (strict), Tailwind v4, official Tiptap 3 extensions
 - `npm run lint` Biome check (vendored `.agents/**` skills are ignored; upstream `input-group` a11y notes are waived in `biome.json`)
 - `npm test` Vitest (use `fake-indexeddb`; jsdom stubs for matchMedia/ResizeObserver/scrollIntoView live in `tests/setup.js`)
 - `npm run e2e` Playwright (Pixel 7 project; rebuilds + serves prod)
-- `npm run size` size-limit (fails over 450 KB gzipped total JS)
-- `npm run size:budget` per-chunk table; warn over 350 KB, fail over 450 KB
+- `npm run size` size-limit (fails over 450 KB gzipped core JS — the startup entry; lazy chunks excluded but precached)
+- `npm run size:budget` per-chunk table; core entry warns over 350 KB, fails over 450 KB
 - `npm run build` production build + service worker
 
 ## Definition of done

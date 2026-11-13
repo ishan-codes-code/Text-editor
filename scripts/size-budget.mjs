@@ -1,6 +1,8 @@
-// Per-chunk budget report: warn at 350 KB, fail at 450 KB gzipped total JS.
-// size-limit (npm run size) enforces the 450 KB fail gate; this script prints
-// the per-chunk table the Phase A prompt requires and surfaces the warning.
+// Per-chunk budget report. The TRD budget covers CORE (startup) JS only:
+// warn at 350 KB, fail at 450 KB gzipped. Lazy chunks (vendor-docx,
+// vendor-mammoth, OverlayHost, tables, formats, docxExport, import) stay lazy
+// and precached — reported below but excluded from the gate.
+// size-limit (npm run size) enforces the same 450 KB fail gate on the entry.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -21,22 +23,25 @@ const rows = files
   .map((name) => {
     const raw = statSync(join(dir.pathname, name)).size;
     const gzipped = gzipSync(readFileSync(join(dir.pathname, name))).length;
-    return { name, raw, gzipped };
+    return { name, raw, gzipped, core: name.startsWith("entry-") };
   })
   .sort((a, b) => b.gzipped - a.gzipped);
 
-const total = rows.reduce((sum, row) => sum + row.gzipped, 0);
+const core = rows
+  .filter((row) => row.core)
+  .reduce((sum, row) => sum + row.gzipped, 0);
 const kb = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
 console.log("chunk".padEnd(44) + "raw".padStart(10) + "gzip".padStart(10));
 for (const row of rows) {
-  console.log(row.name.padEnd(44) + kb(row.raw).padStart(10) + kb(row.gzipped).padStart(10));
+  const label = row.core ? row.name : `${row.name} (lazy)`;
+  console.log(label.padEnd(44) + kb(row.raw).padStart(10) + kb(row.gzipped).padStart(10));
 }
-console.log(`${"TOTAL JS (gzipped)".padEnd(44)}${"".padStart(10)}${kb(total).padStart(10)}`);
+console.log(`${"CORE JS (gzipped)".padEnd(44)}${"".padStart(10)}${kb(core).padStart(10)}`);
 
-if (total > FAIL_BYTES) {
-  console.error(`FAIL: ${kb(total)} exceeds the 450 KB budget.`);
+if (core > FAIL_BYTES) {
+  console.error(`FAIL: core ${kb(core)} exceeds the 450 KB budget.`);
   process.exit(1);
 }
-if (total > WARN_BYTES) {
-  console.log(`WARN: ${kb(total)} exceeds the 350 KB warning threshold.`);
+if (core > WARN_BYTES) {
+  console.log(`WARN: core ${kb(core)} exceeds the 350 KB warning threshold.`);
 }

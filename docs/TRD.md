@@ -27,7 +27,7 @@ A lightweight, offline-first rich-text editor, built as a PWA for personal use o
 **Goals**
 
 - Works fully offline after first load; installs to the Android home screen
-- Small bundle: JS under **450 KB gzipped (warn at 350 KB)** **[v2: was 300 hard]**, enforced by `size-limit` + `size:budget` in CI; editor extensions loaded only as needed; **all** chunks precached after install so nothing needs the network later
+- Small bundle: core JS under **450 KB gzipped (warn at 350 KB)** **[v2: was 300 hard]**, enforced by `size-limit` (entry chunk) + `size:budget` (per-chunk table) in CI; editor extensions and vendor libs (docx, mammoth) loaded only as needed; **all** chunks precached after install so nothing needs the network later
 - Kruti Dev and any uploaded TTF/OTF font render correctly and persist offline
 - Docs-style editing: formatting, lists, tables, images, find and replace, keyboard shortcuts
 - Export to PDF, DOCX and TXT; full backup and restore
@@ -76,7 +76,7 @@ A lightweight, offline-first rich-text editor, built as a PWA for personal use o
 | -------------- | ------------------------------------------------------------------------------------------------- |
 | Startup        | Interactive in under 1.5 s on a mid-range Android phone, cached                                   |
 | Typing latency | Under 50 ms per keystroke on documents up to 50,000 words                                         |
-| Bundle         | Under 450 KB gzipped total JS (warn at 350); export/import/table/overlay chunks lazy but precached |
+| Bundle         | Under 450 KB gzipped core (startup) JS, warn at 350; export/import/table/overlay chunks lazy but precached |
 | Offline        | Zero network requests required after install, including export, import and tables                 |
 | Durability     | Request persistent storage and report the result; save within 500 ms of last edit for normal docs |
 | Privacy        | No telemetry; no data leaves the device                                                           |

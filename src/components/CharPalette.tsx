@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { fontFamilyWithFallback } from "../lib/fontCss";
 import { getSetting, setSetting } from "../storage";
 import {
   MAX_RECENT_GLYPHS,

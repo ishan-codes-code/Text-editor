@@ -2,12 +2,12 @@ import { Blob as NodeBlob } from "node:buffer";
 import type { JSONContent } from "@tiptap/core";
 import { describe, expect, it, vi } from "vitest";
 import { jsonToPlainText } from "../src/export/formats";
-import { Autosave } from "../src/storage/autosave";
 import { createBackup } from "../src/storage/backup";
 import { blobToText } from "../src/storage/blob";
 import { EditorDatabase } from "../src/storage/db";
 import { createDoc, getDoc, saveDocContent } from "../src/storage/documents";
 import { restoreBackup } from "../src/storage/restore";
+import { SaveQueue } from "../src/storage/saveQueue";
 
 // Node Blobs for byte-identical fixtures (see src/storage/storage.test.ts).
 (globalThis as { Blob: unknown }).Blob = NodeBlob;
@@ -73,12 +73,15 @@ describe("typing latency on a 50,000-word document", () => {
     expect(wordCount).toBe(50_000);
 
     // The per-keystroke autosave path: schedule() must be instant (it only
-    // stores the payload and arms a timer); serialization happens later.
+    // stashes lazy getters and arms a timer); serialization happens at write.
     vi.useFakeTimers();
     try {
-      const auto = new Autosave(async () => undefined, {});
+      const auto = new SaveQueue(async () => undefined, {});
       const scheduled = timed("autosave.schedule (per-keystroke cost)", () => {
-        auto.schedule(doc, text);
+        auto.schedule(
+          () => doc,
+          () => text,
+        );
       });
       expect(scheduled.ms).toBeLessThan(50);
       auto.dispose();

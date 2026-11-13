@@ -50,7 +50,12 @@ export function DocList({
           onChange={(event) => onQueryChange(event.currentTarget.value)}
           className="h-11 flex-1 rounded-md border border-input bg-background px-2 text-sm"
         />
-        <Button size="sm" className="h-11" onClick={onNew} aria-label="New document">
+        <Button
+          size="sm"
+          className="h-11"
+          onClick={onNew}
+          aria-label="New document"
+        >
           <FilePlus className="size-4" /> New
         </Button>
       </div>
