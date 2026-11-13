@@ -39,15 +39,29 @@ for (const viewport of VIEWPORTS) {
   });
 }
 
-test("tablet landscape docks the documents panel", async ({ page }) => {
+test("tablet landscape docks the documents panel with a working toggle", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
   await expect(page.locator('[aria-label="Editor"] .tiptap')).toBeVisible();
-  await expect(
-    page.locator('aside[aria-label="Documents panel"]'),
-  ).toBeVisible();
-  // The slide-over trigger hides when the panel is docked.
-  await expect(page.getByRole("button", { name: "Documents" })).toBeHidden();
+  const panel = page.locator('aside[aria-label="Documents panel"]');
+  await expect(panel).toBeVisible();
+  // The Documents button is the collapse toggle on wide screens.
+  await page.getByRole("button", { name: "Documents" }).click();
+  await expect(panel).toBeHidden();
+  // The editor canvas receives the released width: no horizontal overflow
+  // in either state.
+  let overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.getByRole("button", { name: "Documents" }).click();
+  await expect(panel).toBeVisible();
+  overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
 });
 
 test("tablet portrait reaches documents through the sheet", async ({

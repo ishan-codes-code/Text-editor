@@ -19,6 +19,12 @@ test("export and import work, including DOCX while offline", async ({
   await page.goto("/");
   const editor = page.locator('[aria-label="Editor"] .tiptap');
   await expect(editor).toBeVisible();
+  // The editor mounts non-editable and only enables editing once boot
+  // finishes: keystrokes sent earlier are silently dropped, so the dirty
+  // wait below can never fire. Same guard as editor-shortcuts.spec.ts.
+  await expect(editor).toHaveAttribute("contenteditable", "true", {
+    timeout: 10_000,
+  });
 
   await editor.click();
   await page.keyboard.type("Export me");

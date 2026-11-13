@@ -62,6 +62,8 @@ export const SETTINGS_KEYS = {
   lastBackup: "lastBackup",
   persisted: "persisted",
   keepPastedColors: "keepPastedColors",
+  /** Docked documents panel collapsed state (wide screens only). */
+  sidebarOpen: "sidebarOpen",
 } as const;
 
 export interface BackupCounts {
