@@ -25,8 +25,10 @@ import { Text } from "@tiptap/extension-text";
 import { TextAlign } from "@tiptap/extension-text-align";
 import { FontSize, LineHeight, TextStyle } from "@tiptap/extension-text-style";
 import { Underline } from "@tiptap/extension-underline";
+import { ImageRef } from "./imageRef";
 import { Indent } from "./indent";
 import { PageBreak } from "./pageBreak";
+import { Search } from "./search";
 import { AppShortcuts, type AppShortcutsOptions } from "./shortcuts";
 
 export interface EditorExtensionOptions {
@@ -34,10 +36,12 @@ export interface EditorExtensionOptions {
 }
 
 /**
- * The full phase-2 extension set, one official extension per feature.
- * FontSize and LineHeight ship inside `@tiptap/extension-text-style` in v3,
- * so no custom code was needed for them; Indent and PageBreak are the only
- * hand-rolled extensions. Tables and images arrive lazy in phase 5.
+ * The full phase-2 extension set, plus phase-5 extras that stay in the core
+ * chunk: the store-backed image node and the find/replace search plugin are
+ * small and synchronous. FontSize and LineHeight ship inside
+ * `@tiptap/extension-text-style` in v3, so no custom code was needed for them;
+ * Indent, PageBreak, ImageRef and Search are the hand-rolled extensions.
+ * Tables arrive lazily (see `loadTableExtensions`) to keep the core small.
  */
 export function createEditorExtensions(
   options: EditorExtensionOptions,
@@ -72,6 +76,8 @@ export function createEditorExtensions(
     CodeBlock,
     HorizontalRule,
     CharacterCount,
+    ImageRef,
+    Search,
     Indent,
     PageBreak,
     AppShortcuts.configure(options.shortcuts),

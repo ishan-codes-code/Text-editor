@@ -4,6 +4,12 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 export interface AppShortcutsOptions {
   /** Opens the link editor (toolbar dialog); invoked by Ctrl+K. */
   onOpenLink: () => void;
+  /** Opens the find bar; invoked by Ctrl+F (plain) and Ctrl+H (replace). */
+  onOpenFind: (withReplace: boolean) => void;
+  /** Toggles the selection between the Kruti Dev font and the default font. */
+  onToggleFont: () => void;
+  /** Opens the special-character palette. */
+  onOpenPalette: () => void;
 }
 
 /**
@@ -15,16 +21,24 @@ export interface AppShortcutsOptions {
  * - Alt+Shift+5: strikethrough (Docs-compatible; Tiptap binds Mod-Shift-S)
  * - Shift+Mod+Z: redo (Tiptap binds Mod-Y only)
  * - Mod+K: link dialog (the Link extension binds no key)
+ * - Ctrl+F / Ctrl+H: find bar (phase 5 owns them now; preventDefault always)
+ * - Mod+Shift+K: toggle Hindi/English font (phase 4)
+ * - Mod+Shift+P: special-character palette (phase 4)
  *
  * Alt+Shift+5 cannot be a keymap entry: with Shift held the key reads "%",
- * so it is matched by physical code instead. Ctrl+F/H intentionally keep
- * the browser behavior until the phase-5 find UI owns them.
+ * so it is matched by physical code instead. Browser-reserved Ctrl+N/T/W are
+ * never touched.
  */
 export const AppShortcuts = Extension.create<AppShortcutsOptions>({
   name: "appShortcuts",
 
   addOptions() {
-    return { onOpenLink: () => undefined };
+    return {
+      onOpenLink: () => undefined,
+      onOpenFind: () => undefined,
+      onToggleFont: () => undefined,
+      onOpenPalette: () => undefined,
+    };
   },
 
   addKeyboardShortcuts() {
@@ -32,6 +46,22 @@ export const AppShortcuts = Extension.create<AppShortcutsOptions>({
       "Shift-Mod-z": () => this.editor.commands.redo(),
       "Mod-k": () => {
         this.options.onOpenLink();
+        return true;
+      },
+      "Mod-f": () => {
+        this.options.onOpenFind(false);
+        return true;
+      },
+      "Mod-h": () => {
+        this.options.onOpenFind(true);
+        return true;
+      },
+      "Shift-Mod-k": () => {
+        this.options.onToggleFont();
+        return true;
+      },
+      "Shift-Mod-p": () => {
+        this.options.onOpenPalette();
         return true;
       },
     };
