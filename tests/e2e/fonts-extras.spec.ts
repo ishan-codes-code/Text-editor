@@ -104,9 +104,13 @@ test("font upload, dropdown, toggle, palette, and offline reload", async ({
   await page.reload();
   const offlineEditor = page.locator('[aria-label="Editor"] .tiptap');
   await expect(offlineEditor).toContainText("hindi");
-  await expect(
-    page.evaluate(() => document.fonts.check('16px "TestFont"')),
-  ).resolves.toBe(true);
+  // Poll: FontFace load state can lag a frame behind the boot await under
+  // parallel-worker CPU contention.
+  await expect
+    .poll(() => page.evaluate(() => document.fonts.check('16px "TestFont"')), {
+      timeout: 5000,
+    })
+    .toBe(true);
   const family = await offlineEditor
     .locator("span[style*='TestFont']")
     .evaluate((node) => getComputedStyle(node).fontFamily);
