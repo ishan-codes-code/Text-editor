@@ -1,4 +1,5 @@
 import type { Editor } from "@tiptap/core";
+import { useEditorState } from "@tiptap/react";
 import {
   AlignCenter,
   AlignJustify,
@@ -33,21 +34,108 @@ import {
   Underline,
   Undo,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { Button } from "./ui/button";
 
-function useEditorTick(editor: Editor | null): void {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (editor === null) return;
-    const bump = () => {
-      setTick((tick) => tick + 1);
-    };
-    editor.on("transaction", bump);
-    return () => {
-      editor.off("transaction", bump);
-    };
-  }, [editor]);
+interface ToolbarSnapshot {
+  canUndo: boolean;
+  canRedo: boolean;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+  subscript: boolean;
+  superscript: boolean;
+  block: "p" | "h1" | "h2" | "h3";
+  fontFamily: string;
+  fontSize: string;
+  lineHeight: string;
+  align: "left" | "center" | "right" | "justify" | "";
+  bulletList: boolean;
+  orderedList: boolean;
+  taskList: boolean;
+  link: boolean;
+  blockquote: boolean;
+  codeBlock: boolean;
+  table: boolean;
+  canAddRow: boolean;
+  canAddColumn: boolean;
+  canDeleteTable: boolean;
+}
+
+const EMPTY_TOOLBAR: ToolbarSnapshot = {
+  canUndo: false,
+  canRedo: false,
+  bold: false,
+  italic: false,
+  underline: false,
+  strike: false,
+  subscript: false,
+  superscript: false,
+  block: "p",
+  fontFamily: "",
+  fontSize: "",
+  lineHeight: "",
+  align: "",
+  bulletList: false,
+  orderedList: false,
+  taskList: false,
+  link: false,
+  blockquote: false,
+  codeBlock: false,
+  table: false,
+  canAddRow: false,
+  canAddColumn: false,
+  canDeleteTable: false,
+};
+
+function selectToolbar(ctx: { editor: Editor | null }): ToolbarSnapshot {
+  const { editor } = ctx;
+  if (editor === null) return EMPTY_TOOLBAR;
+  const textStyle = editor.getAttributes("textStyle") as {
+    fontSize?: string;
+    lineHeight?: string;
+    fontFamily?: string;
+  };
+  return {
+    canUndo: editor.can().undo(),
+    canRedo: editor.can().redo(),
+    bold: editor.isActive("bold"),
+    italic: editor.isActive("italic"),
+    underline: editor.isActive("underline"),
+    strike: editor.isActive("strike"),
+    subscript: editor.isActive("subscript"),
+    superscript: editor.isActive("superscript"),
+    block: editor.isActive("heading", { level: 1 })
+      ? "h1"
+      : editor.isActive("heading", { level: 2 })
+        ? "h2"
+        : editor.isActive("heading", { level: 3 })
+          ? "h3"
+          : "p",
+    fontFamily: textStyle.fontFamily ?? "",
+    fontSize: textStyle.fontSize ?? "",
+    lineHeight: textStyle.lineHeight ?? "",
+    align: editor.isActive({ textAlign: "center" })
+      ? "center"
+      : editor.isActive({ textAlign: "right" })
+        ? "right"
+        : editor.isActive({ textAlign: "justify" })
+          ? "justify"
+          : editor.isActive({ textAlign: "left" })
+            ? "left"
+            : "",
+    bulletList: editor.isActive("bulletList"),
+    orderedList: editor.isActive("orderedList"),
+    taskList: editor.isActive("taskList"),
+    link: editor.isActive("link"),
+    blockquote: editor.isActive("blockquote"),
+    codeBlock: editor.isActive("codeBlock"),
+    table: editor.isActive("table"),
+    canAddRow: editor.can().addRowAfter(),
+    canAddColumn: editor.can().addColumnAfter(),
+    canDeleteTable: editor.can().deleteTable(),
+  };
 }
 
 export interface ToolbarProps {
@@ -80,7 +168,7 @@ function ToolButton({
   active?: boolean;
   disabled?: boolean;
   onPress: () => void;
-  children: preact.ComponentChildren;
+  children: ReactNode;
 }) {
   return (
     <Button
@@ -112,20 +200,12 @@ export function Toolbar({
   saveLabel,
   families,
 }: ToolbarProps) {
-  useEditorTick(editor);
+  // Selector subscription: typing re-renders only this toolbar, never the
+  // whole app tree. The snapshot is deep-compared, so unchanged state does
+  // not re-render even though the selector builds a fresh object.
+  const ui =
+    useEditorState({ editor, selector: selectToolbar }) ?? EMPTY_TOOLBAR;
   if (editor === null) return null;
-  const textStyle = editor.getAttributes("textStyle") as {
-    fontSize?: string;
-    lineHeight?: string;
-    fontFamily?: string;
-  };
-  const currentBlock = editor.isActive("heading", { level: 1 })
-    ? "h1"
-    : editor.isActive("heading", { level: 2 })
-      ? "h2"
-      : editor.isActive("heading", { level: 3 })
-        ? "h3"
-        : "p";
 
   return (
     <div
@@ -136,7 +216,7 @@ export function Toolbar({
       <ToolButton
         label="Undo (Ctrl+Z)"
         title="Undo (Ctrl+Z)"
-        disabled={!editor.can().undo()}
+        disabled={!ui.canUndo}
         onPress={() => editor.chain().focus().undo().run()}
       >
         <Undo />
@@ -144,7 +224,7 @@ export function Toolbar({
       <ToolButton
         label="Redo (Ctrl+Y)"
         title="Redo (Ctrl+Y)"
-        disabled={!editor.can().redo()}
+        disabled={!ui.canRedo}
         onPress={() => editor.chain().focus().redo().run()}
       >
         <Redo />
@@ -153,7 +233,7 @@ export function Toolbar({
       <ToolButton
         label="Bold (Ctrl+B)"
         title="Bold (Ctrl+B)"
-        active={editor.isActive("bold")}
+        active={ui.bold}
         onPress={() => editor.chain().focus().toggleBold().run()}
       >
         <Bold />
@@ -161,7 +241,7 @@ export function Toolbar({
       <ToolButton
         label="Italic (Ctrl+I)"
         title="Italic (Ctrl+I)"
-        active={editor.isActive("italic")}
+        active={ui.italic}
         onPress={() => editor.chain().focus().toggleItalic().run()}
       >
         <Italic />
@@ -169,7 +249,7 @@ export function Toolbar({
       <ToolButton
         label="Underline (Ctrl+U)"
         title="Underline (Ctrl+U)"
-        active={editor.isActive("underline")}
+        active={ui.underline}
         onPress={() => editor.chain().focus().toggleUnderline().run()}
       >
         <Underline />
@@ -177,7 +257,7 @@ export function Toolbar({
       <ToolButton
         label="Strikethrough (Alt+Shift+5)"
         title="Strikethrough (Alt+Shift+5)"
-        active={editor.isActive("strike")}
+        active={ui.strike}
         onPress={() => editor.chain().focus().toggleStrike().run()}
       >
         <Strikethrough />
@@ -185,7 +265,7 @@ export function Toolbar({
       <ToolButton
         label="Subscript"
         title="Subscript"
-        active={editor.isActive("subscript")}
+        active={ui.subscript}
         onPress={() => editor.chain().focus().toggleSubscript().run()}
       >
         <Subscript />
@@ -193,7 +273,7 @@ export function Toolbar({
       <ToolButton
         label="Superscript"
         title="Superscript"
-        active={editor.isActive("superscript")}
+        active={ui.superscript}
         onPress={() => editor.chain().focus().toggleSuperscript().run()}
       >
         <Superscript />
@@ -215,7 +295,7 @@ export function Toolbar({
         id="toolbar-block"
         aria-label="Block style"
         className="h-9 rounded-md border border-input bg-background px-1 text-sm"
-        value={currentBlock}
+        value={ui.block}
         onChange={(event) => {
           const value = event.currentTarget.value;
           if (value === "p") editor.chain().focus().setParagraph().run();
@@ -239,7 +319,7 @@ export function Toolbar({
         id="toolbar-font"
         aria-label="Font family"
         className="h-9 max-w-36 rounded-md border border-input bg-background px-1 text-sm"
-        value={textStyle.fontFamily ?? ""}
+        value={ui.fontFamily}
         onChange={(event) => {
           const value = event.currentTarget.value;
           if (value === "") editor.chain().focus().unsetFontFamily().run();
@@ -274,7 +354,7 @@ export function Toolbar({
         id="toolbar-size"
         aria-label="Font size"
         className="h-9 rounded-md border border-input bg-background px-1 text-sm"
-        value={(textStyle.fontSize ?? "").replace("px", "")}
+        value={ui.fontSize.replace("px", "")}
         onChange={(event) => {
           const value = event.currentTarget.value;
           if (value === "") editor.chain().focus().unsetFontSize().run();
@@ -295,7 +375,7 @@ export function Toolbar({
         id="toolbar-line-height"
         aria-label="Line spacing"
         className="h-9 rounded-md border border-input bg-background px-1 text-sm"
-        value={textStyle.lineHeight ?? ""}
+        value={ui.lineHeight}
         onChange={(event) => {
           const value = event.currentTarget.value;
           if (value === "") editor.chain().focus().unsetLineHeight().run();
@@ -349,7 +429,7 @@ export function Toolbar({
       <ToolButton
         label="Align left (Ctrl+Shift+L)"
         title="Align left (Ctrl+Shift+L)"
-        active={editor.isActive({ textAlign: "left" })}
+        active={ui.align === "left"}
         onPress={() => editor.chain().focus().setTextAlign("left").run()}
       >
         <AlignLeft />
@@ -357,7 +437,7 @@ export function Toolbar({
       <ToolButton
         label="Align center (Ctrl+Shift+E)"
         title="Align center (Ctrl+Shift+E)"
-        active={editor.isActive({ textAlign: "center" })}
+        active={ui.align === "center"}
         onPress={() => editor.chain().focus().setTextAlign("center").run()}
       >
         <AlignCenter />
@@ -365,7 +445,7 @@ export function Toolbar({
       <ToolButton
         label="Align right (Ctrl+Shift+R)"
         title="Align right (Ctrl+Shift+R)"
-        active={editor.isActive({ textAlign: "right" })}
+        active={ui.align === "right"}
         onPress={() => editor.chain().focus().setTextAlign("right").run()}
       >
         <AlignRight />
@@ -373,7 +453,7 @@ export function Toolbar({
       <ToolButton
         label="Justify (Ctrl+Shift+J)"
         title="Justify (Ctrl+Shift+J)"
-        active={editor.isActive({ textAlign: "justify" })}
+        active={ui.align === "justify"}
         onPress={() => editor.chain().focus().setTextAlign("justify").run()}
       >
         <AlignJustify />
@@ -382,7 +462,7 @@ export function Toolbar({
       <ToolButton
         label="Bullet list (Ctrl+Shift+8)"
         title="Bullet list (Ctrl+Shift+8)"
-        active={editor.isActive("bulletList")}
+        active={ui.bulletList}
         onPress={() => editor.chain().focus().toggleBulletList().run()}
       >
         <List />
@@ -390,7 +470,7 @@ export function Toolbar({
       <ToolButton
         label="Numbered list (Ctrl+Shift+7)"
         title="Numbered list (Ctrl+Shift+7)"
-        active={editor.isActive("orderedList")}
+        active={ui.orderedList}
         onPress={() => editor.chain().focus().toggleOrderedList().run()}
       >
         <ListOrdered />
@@ -398,7 +478,7 @@ export function Toolbar({
       <ToolButton
         label="Checklist (Ctrl+Shift+9)"
         title="Checklist (Ctrl+Shift+9)"
-        active={editor.isActive("taskList")}
+        active={ui.taskList}
         onPress={() => editor.chain().focus().toggleTaskList().run()}
       >
         <ListChecks />
@@ -421,7 +501,7 @@ export function Toolbar({
       <ToolButton
         label="Link (Ctrl+K)"
         title="Link (Ctrl+K)"
-        active={editor.isActive("link")}
+        active={ui.link}
         onPress={onOpenLink}
       >
         <LinkIcon />
@@ -429,7 +509,7 @@ export function Toolbar({
       <ToolButton
         label="Blockquote"
         title="Blockquote"
-        active={editor.isActive("blockquote")}
+        active={ui.blockquote}
         onPress={() => editor.chain().focus().toggleBlockquote().run()}
       >
         <Quote />
@@ -437,7 +517,7 @@ export function Toolbar({
       <ToolButton
         label="Code block"
         title="Code block"
-        active={editor.isActive("codeBlock")}
+        active={ui.codeBlock}
         onPress={() => editor.chain().focus().toggleCodeBlock().run()}
       >
         <Code />
@@ -460,7 +540,7 @@ export function Toolbar({
       <ToolButton
         label="Insert table (3x3)"
         title="Insert table (3x3)"
-        active={editor.isActive("table")}
+        active={ui.table}
         onPress={() =>
           editor
             .chain()
@@ -474,7 +554,7 @@ export function Toolbar({
       <ToolButton
         label="Add row below"
         title="Add row below"
-        disabled={!editor.can().addRowAfter()}
+        disabled={!ui.canAddRow}
         onPress={() => editor.chain().focus().addRowAfter().run()}
       >
         <Rows3 />
@@ -482,7 +562,7 @@ export function Toolbar({
       <ToolButton
         label="Add column after"
         title="Add column after"
-        disabled={!editor.can().addColumnAfter()}
+        disabled={!ui.canAddColumn}
         onPress={() => editor.chain().focus().addColumnAfter().run()}
       >
         <Columns3 />
@@ -490,7 +570,7 @@ export function Toolbar({
       <ToolButton
         label="Delete table"
         title="Delete table"
-        disabled={!editor.can().deleteTable()}
+        disabled={!ui.canDeleteTable}
         onPress={() => editor.chain().focus().deleteTable().run()}
       >
         <Trash2 />

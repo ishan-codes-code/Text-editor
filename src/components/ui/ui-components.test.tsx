@@ -1,5 +1,6 @@
-import { render } from "preact";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { toast } from "sonner";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Button } from "./button";
 import {
   Command,
@@ -8,40 +9,17 @@ import {
   CommandItem,
   CommandList,
 } from "./command";
-import { Toaster, toast } from "./sonner";
+import { Toaster } from "./sonner";
 
-// NOTE: Radix-based Dialog/Sheet/DropdownMenu interaction is covered by the
-// Playwright suite (tests/e2e/ui-components.spec.ts) in real Chromium
-// instead of here. Vitest's SSR externalizer lets Radix's CJS transitive
-// deps require the real `react` peer, bypassing the Vite preact/compat
-// alias — a test-runner artifact, not a compat failure (the production
-// build resolves one React). jsdom therefore cannot execute those trees.
+// Radix Dialog/Sheet/DropdownMenu interaction is covered by the Playwright
+// suite (tests/e2e/ui-components.spec.ts) in real Chromium instead of here.
 
-// Preact flushes passive effects after paint (requestAnimationFrame in
-// jsdom fires on a ~16ms timer), so one macrotask is not enough. 50ms waits
-// out both the frame and the render microtasks.
-const tick = () => new Promise((resolve) => setTimeout(resolve, 50));
+afterEach(() => {
+  cleanup();
+});
 
-async function click(element: Element | null): Promise<void> {
-  expect(element).not.toBeNull();
-  (element as HTMLElement).click();
-  await tick();
-}
-
-describe("shadcn-style UI components on preact/compat", () => {
-  let container: HTMLDivElement;
-
-  beforeEach(() => {
-    container = document.createElement("div");
-    document.body.append(container);
-  });
-
-  afterEach(() => {
-    render(null, container);
-    container.remove();
-  });
-
-  it("Button renders variants without React", async () => {
+describe("shadcn UI components on React 19", () => {
+  it("Button renders variants", () => {
     render(
       <div>
         <Button>Default</Button>
@@ -49,10 +27,8 @@ describe("shadcn-style UI components on preact/compat", () => {
           Small
         </Button>
       </div>,
-      container,
     );
-    await tick();
-    const buttons = document.body.querySelectorAll("button");
+    const buttons = screen.getAllByRole("button");
     expect(buttons).toHaveLength(2);
     expect(buttons[0]?.className).toContain("bg-primary");
     expect(buttons[1]?.className).toContain("border");
@@ -73,54 +49,32 @@ describe("shadcn-style UI components on preact/compat", () => {
           <CommandEmpty>No match.</CommandEmpty>
         </CommandList>
       </Command>,
-      container,
     );
-    await tick();
-    await tick();
-    const input = document.body.querySelector("input") as HTMLInputElement;
+    const input = screen.getByPlaceholderText("Search…");
     expect(input).not.toBeNull();
 
-    input.focus();
-    input.value = "ser";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    await tick();
-    expect(document.body.querySelector('[data-value="Serif"]')).not.toBeNull();
-    expect(document.body.querySelector('[data-value="Monospace"]')).toBeNull();
+    fireEvent.change(input, { target: { value: "ser" } });
+    expect(await screen.findByText("Serif")).not.toBeNull();
 
-    input.value = "zzz";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    await tick();
-    expect(document.body.textContent).toContain("No match.");
+    fireEvent.change(input, { target: { value: "zzz" } });
+    expect(await screen.findByText("No match.")).not.toBeNull();
 
-    input.value = "";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    await tick();
+    fireEvent.change(input, { target: { value: "" } });
     // After clearing, the first item is active again; ArrowDown moves to the
-    // second one, proving keyboard navigation, and Enter selects it.
-    input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
-    );
-    await tick();
-    input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
-    );
-    await tick();
+    // second one and Enter selects it.
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
     expect(onSelect).toHaveBeenCalledWith("Monospace");
   });
 
   it("Sonner toasts and dismisses", async () => {
-    render(<Toaster />, container);
-    // Let the subscription effect run before publishing, as in real usage.
-    await tick();
-    toast("Saved");
-    await tick();
-    expect(
-      document.body.querySelector('[data-testid="toaster"]')?.textContent,
-    ).toContain("Saved");
+    render(<Toaster />);
+    const id = toast("Saved");
+    expect(await screen.findByText("Saved")).not.toBeNull();
 
-    await click(document.body.querySelector('button[aria-label="Dismiss"]'));
-    expect(
-      document.body.querySelector('[data-testid="toaster"]')?.textContent,
-    ).not.toContain("Saved");
+    toast.dismiss(id);
+    await vi.waitFor(() => {
+      expect(screen.queryByText("Saved")).toBeNull();
+    });
   });
 });

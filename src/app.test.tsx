@@ -1,13 +1,9 @@
-import { render } from "preact";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./app";
 
 describe("App", () => {
-  let container: HTMLDivElement;
-
   beforeEach(async () => {
-    container = document.createElement("div");
-    document.body.append(container);
     // Dexie's own delete closes open handles first, then wipes: a raw
     // fire-and-forget deleteDatabase races boot and flakes the suite.
     // Forgetting the shared instance forces the app to reopen a fresh one.
@@ -17,8 +13,7 @@ describe("App", () => {
   });
 
   afterEach(async () => {
-    render(null, container);
-    container.remove();
+    cleanup();
     localStorage.clear();
     // Unmount kicks a best-effort autosave flush that the test cannot await
     // (cleanup functions are synchronous). Serialize a no-op transaction
@@ -32,41 +27,31 @@ describe("App", () => {
   });
 
   it("boots a document, toolbar and canvas", async () => {
-    render(<App />, container);
+    render(<App />);
     await vi.waitFor(() => {
       expect(
-        container.querySelector(
+        document.body.querySelector(
           '[aria-label="Editor"] .tiptap[contenteditable="true"]',
         ),
       ).not.toBeNull();
     });
-    expect(
-      container.querySelector('[role="toolbar"][aria-label="Formatting"]'),
-    ).not.toBeNull();
-    expect(
-      container.querySelector('button[aria-label="Documents"]'),
-    ).not.toBeNull();
-    expect(
-      container.querySelector('[data-testid="word-count"]'),
-    ).not.toBeNull();
-    expect(
-      container.querySelector('[data-testid="save-status"]'),
-    ).not.toBeNull();
-    expect(
-      container.querySelector('[data-testid="persist-status"]'),
-    ).not.toBeNull();
+    expect(screen.getByRole("toolbar", { name: "Formatting" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Documents" })).not.toBeNull();
+    expect(screen.getByTestId("word-count")).not.toBeNull();
+    expect(screen.getByTestId("save-status")).not.toBeNull();
+    expect(screen.getByTestId("persist-status")).not.toBeNull();
   });
 
   it("mounts the editor with hostile-input attributes", async () => {
-    render(<App />, container);
+    render(<App />);
     await vi.waitFor(() => {
       expect(
-        container.querySelector(
+        document.body.querySelector(
           '[aria-label="Editor"] .tiptap[contenteditable="true"]',
         ),
       ).not.toBeNull();
     });
-    const editable = container.querySelector(
+    const editable = document.body.querySelector(
       '[aria-label="Editor"] .tiptap[contenteditable="true"]',
     );
     expect(editable?.getAttribute("spellcheck")).toBe("false");
@@ -75,10 +60,10 @@ describe("App", () => {
   });
 
   it("reflects typing in the word and save status", async () => {
-    render(<App />, container);
+    render(<App />);
     await vi.waitFor(() => {
       expect(
-        container.querySelector(
+        document.body.querySelector(
           '[aria-label="Editor"] .tiptap[contenteditable="true"]',
         ),
       ).not.toBeNull();
@@ -87,11 +72,9 @@ describe("App", () => {
     // typing: input dispatched during the load is intentionally ignored so
     // a real user's early keystrokes can never be wiped by setContent.
     await vi.waitFor(() => {
-      expect(container.querySelector("header h1")?.textContent).toBe(
-        "Untitled",
-      );
+      expect(document.querySelector("header h1")?.textContent).toBe("Untitled");
     });
-    const editable = container.querySelector(
+    const editable = document.body.querySelector(
       '[aria-label="Editor"] .tiptap[contenteditable="true"]',
     ) as HTMLElement | null;
     const paragraph = editable?.querySelector("p");
@@ -100,16 +83,14 @@ describe("App", () => {
     }
     editable?.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await vi.waitFor(() => {
-      expect(
-        container.querySelector('[data-testid="word-count"]')?.textContent,
-      ).toContain("3 words");
+      expect(screen.getByTestId("word-count")?.textContent).toContain(
+        "3 words",
+      );
     });
     // Debounced autosave persists the content.
     await vi.waitFor(
       () => {
-        expect(
-          container.querySelector('[data-testid="save-status"]')?.textContent,
-        ).toMatch(/Saved/);
+        expect(screen.getByTestId("save-status")?.textContent).toMatch(/Saved/);
       },
       { timeout: 5000 },
     );

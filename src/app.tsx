@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { toast } from "sonner";
 import { FindBar } from "./components/FindBar";
 import {
   LAST_CUSTOM_FONT_KEY,
@@ -18,7 +19,7 @@ import {
 import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { Button } from "./components/ui/button";
-import { Toaster, toast } from "./components/ui/sonner";
+import { Toaster } from "./components/ui/sonner";
 import { useTiptapEditor } from "./hooks/useTiptapEditor";
 import { ensurePersistentStorage, initPwa } from "./pwa";
 import {
@@ -143,8 +144,6 @@ export function App() {
   const [readOnly, setReadOnly] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [words, setWords] = useState(0);
-  const [chars, setChars] = useState(0);
   const [zoom, setZoom] = useState<string>("1");
   const [keepColors, setKeepColors] = useState(false);
   const [fonts, setFonts] = useState<FontRecord[]>([]);
@@ -228,36 +227,25 @@ export function App() {
       setReadOnly(!lock.held);
       setSaveState("saved");
       setActiveId(id);
-      setWords(doc.wordCount);
-      setChars(editor.getText().length);
       await setSetting(SETTINGS_KEYS.lastOpenedDoc, id);
       await refreshDocs();
     },
     [refreshDocs],
   );
 
-  const recount = useCallback((editor: Editor) => {
-    const text = editor.getText();
-    const trimmed = text.trim();
-    setWords(trimmed === "" ? 0 : trimmed.split(/\s+/).length);
-    setChars(text.length);
+  const handleUpdate = useCallback((editor: Editor) => {
+    if (loadingRef.current) return;
+    // Word counts subscribe via StatusBar's useEditorState selector, so
+    // typing never re-renders this tree — only the autosave is scheduled.
+    const id = activeIdRef.current;
+    if (id === null) return;
+    autosaveRef.current?.schedule(editor.getJSON(), editor.getText());
+    const now = Date.now();
+    if (now - lastSnapshotCheckRef.current > 60_000) {
+      lastSnapshotCheckRef.current = now;
+      void maybeSnapshot(id, editor.getJSON(), now);
+    }
   }, []);
-
-  const handleUpdate = useCallback(
-    (editor: Editor) => {
-      if (loadingRef.current) return;
-      recount(editor);
-      const id = activeIdRef.current;
-      if (id === null) return;
-      autosaveRef.current?.schedule(editor.getJSON(), editor.getText());
-      const now = Date.now();
-      if (now - lastSnapshotCheckRef.current > 60_000) {
-        lastSnapshotCheckRef.current = now;
-        void maybeSnapshot(id, editor.getJSON(), now);
-      }
-    },
-    [recount],
-  );
 
   const openLinkDialog = useCallback(() => {
     const editor = editorRef.current;
@@ -329,7 +317,7 @@ export function App() {
     }
   }, []);
 
-  const { mountRef, editor } = useTiptapEditor({
+  const { editor, EditorContent } = useTiptapEditor({
     // Mount non-editable: openDoc enables editing once the document is
     // loaded. Otherwise keystrokes typed between mount and setContent
     // would be silently wiped by the load.
@@ -825,12 +813,11 @@ export function App() {
                 : ({ zoom: zoomValue } as React.CSSProperties)
             }
           >
-            <div ref={mountRef} />
+            <EditorContent editor={editor} />
           </section>
 
           <StatusBar
-            words={words}
-            chars={chars}
+            editor={editor}
             saveState={saveState}
             savedAt={savedAt}
             readOnly={readOnly}
