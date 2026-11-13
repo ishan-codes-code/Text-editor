@@ -1,6 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import { useEditorState } from "@tiptap/react";
-import type { SaveState } from "../storage/autosave";
+import type { SaveState } from "../storage";
 
 export function saveStateLabel(
   state: SaveState,

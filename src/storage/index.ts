@@ -1,4 +1,3 @@
-export { Autosave, type SaveState } from "./autosave";
 export {
   backupFileName,
   createBackup,
@@ -49,12 +48,16 @@ export {
   locksSupported,
 } from "./locks";
 export {
+  type ParsedBackup,
   parseBackup,
   RestoreError,
+  type RestoreHooks,
   type RestoreMode,
   type RestoreReport,
   restoreBackup,
+  writeParsedBackup,
 } from "./restore";
+export { type SavePayload, SaveQueue, type SaveState } from "./saveQueue";
 export {
   getSnapshotContent,
   listSnapshots,
@@ -64,6 +67,7 @@ export {
 } from "./snapshots";
 export type {
   BackupManifest,
+  DocMetaRecord,
   DocRecord,
   FontFormat,
   FontRecord,

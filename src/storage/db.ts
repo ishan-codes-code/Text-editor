@@ -1,5 +1,6 @@
 import { Dexie, type Table } from "dexie";
 import type {
+  DocMetaRecord,
   DocRecord,
   FontRecord,
   ImageRecord,
@@ -7,11 +8,16 @@ import type {
 } from "./types";
 
 /**
- * Dexie database, schema v1. UI code must never import this directly —
+ * Dexie database, schema v2. UI code must never import this directly —
  * go through the functions in `src/storage/` instead.
+ *
+ * v2 adds `docMeta`: a projection of the docs row WITHOUT the editor JSON.
+ * The document list (re-read on every autosave) queries docMeta only, so a
+ * save never loads full document content back into memory.
  */
 export class EditorDatabase extends Dexie {
   docs!: Table<DocRecord, string>;
+  docMeta!: Table<DocMetaRecord, string>;
   snapshots!: Table<SnapshotRecord, number>;
   fonts!: Table<FontRecord, string>;
   images!: Table<ImageRecord, string>;
@@ -26,6 +32,28 @@ export class EditorDatabase extends Dexie {
       images: "&id, docId",
       settings: "&key",
     });
+    this.version(2)
+      .stores({
+        docs: "&id, updatedAt",
+        docMeta: "&id, updatedAt",
+        snapshots: "++id, docId, savedAt",
+        fonts: "&id, family",
+        images: "&id, docId",
+        settings: "&key",
+      })
+      .upgrade(async (tx) => {
+        // Backfill the projection for databases created under v1.
+        const docs = await tx.table("docs").toArray();
+        const meta = (docs as DocRecord[]).map((doc) => ({
+          id: doc.id,
+          title: doc.title,
+          titleFont: doc.titleFont,
+          wordCount: doc.wordCount,
+          createdAt: doc.createdAt,
+          updatedAt: doc.updatedAt,
+        }));
+        await tx.table("docMeta").bulkAdd(meta);
+      });
   }
 }
 

@@ -1,6 +1,6 @@
+import { cleanup, render } from "@testing-library/react";
 import type { Editor } from "@tiptap/core";
 import { EditorContent } from "@tiptap/react";
-import { cleanup, render } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useTiptapEditor } from "./useTiptapEditor";
@@ -25,13 +25,13 @@ function Harness({
  * identified by the table nodes only it carries.
  */
 async function waitForFinalEditor(
-  seen: (Editor | null)[],
+  seen: readonly (Editor | null | undefined)[],
 ): Promise<Editor> {
   let finalEditor: Editor | null = null;
   await vi.waitFor(() => {
     const last = seen.at(-1);
     expect(last?.schema.nodes.table).not.toBeUndefined();
-    finalEditor = last;
+    finalEditor = last ?? null;
   });
   if (finalEditor === null) throw new Error("editor never settled");
   return finalEditor;

@@ -20,10 +20,15 @@ import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { Button } from "./components/ui/button";
 import { Toaster } from "./components/ui/sonner";
+import {
+  remeasureAfterFontsLoad,
+  resolveOpenContent,
+  setContentWhenReady,
+} from "./editor/applyContent";
 import { useTiptapEditor } from "./hooks/useTiptapEditor";
 import { ensurePersistentStorage, initPwa } from "./pwa";
+import { useSessionStore } from "./session/store";
 import {
-  Autosave,
   acquireDocLock,
   addFont,
   addImage,
@@ -48,6 +53,7 @@ import {
   registerStoredFonts,
   renameDoc,
   restoreBackup,
+  SaveQueue,
   type SaveState,
   SETTINGS_KEYS,
   saveDocContent,
@@ -165,7 +171,7 @@ export function App() {
   const [restoreMode, setRestoreMode] = useState<"merge" | "replace">("merge");
 
   const pwa = useMemo(() => initPwa(), []);
-  const autosaveRef = useRef<Autosave | null>(null);
+  const autosaveRef = useRef<SaveQueue | null>(null);
   const lockRef = useRef<DocLock | null>(null);
   const loadingRef = useRef(false);
   const activeIdRef = useRef<string | null>(null);
@@ -188,7 +194,9 @@ export function App() {
   const openDoc = useCallback(
     async (id: string) => {
       const editor = editorRef.current;
-      if (editor === null) return;
+      if (editor === null || editor.isDestroyed) return;
+      const session = useSessionStore.getState();
+      session.transition("switching");
       // Lock the surface while switching: keystrokes typed between the
       // flush and setContent would otherwise be silently wiped by the load.
       const wasEditable = editor.isEditable;
@@ -201,34 +209,59 @@ export function App() {
       lockRef.current?.release();
       lockRef.current = null;
 
-      const doc = await getDoc(id);
-      if (doc === undefined) {
+      try {
+        const doc = await getDoc(id);
+        if (doc === undefined) {
+          editor.setEditable(wasEditable);
+          session.transition("ready");
+          return;
+        }
+        const lock = await acquireDocLock(id);
+        lockRef.current = lock;
+        activeIdRef.current = id;
+
+        // A corrupt stored doc falls back to its newest loadable snapshot
+        // (or blank); the editor stays enabled and the failure is reported.
+        const { content, recovered } = await resolveOpenContent(id);
+        loadingRef.current = true;
+        await setContentWhenReady(editor, content);
+        editor.setEditable(lock.held);
+        loadingRef.current = false;
+        if (recovered) {
+          session.transition("error", {
+            error: "Stored content was corrupt; restored from snapshot.",
+          });
+          toast("Document recovered", {
+            description:
+              "The saved copy was unreadable, so the newest snapshot was opened instead.",
+          });
+          session.transition("ready");
+        }
+
+        const autosave = new SaveQueue(
+          async (json, text) => {
+            await saveDocContent(id, json, text);
+            setSavedAt(Date.now());
+            await refreshDocs();
+          },
+          { onStateChange: setSaveState },
+        );
+        autosaveRef.current = autosave;
+        setReadOnly(!lock.held);
+        setSaveState("saved");
+        setActiveId(id);
+        session.setActiveId(id);
+        session.transition("ready");
+        await setSetting(SETTINGS_KEYS.lastOpenedDoc, id);
+        await refreshDocs();
+      } catch {
         editor.setEditable(wasEditable);
-        return;
+        session.transition("error", { error: "Could not open the document." });
+        toast("Open failed", {
+          description: "That document could not be opened. Try again.",
+        });
+        session.transition("ready");
       }
-      const lock = await acquireDocLock(id);
-      lockRef.current = lock;
-      activeIdRef.current = id;
-
-      loadingRef.current = true;
-      editor.commands.setContent(doc.content);
-      editor.setEditable(lock.held);
-      loadingRef.current = false;
-
-      const autosave = new Autosave(
-        async (json, text) => {
-          await saveDocContent(id, json, text);
-          setSavedAt(Date.now());
-          await refreshDocs();
-        },
-        { onStateChange: setSaveState },
-      );
-      autosaveRef.current = autosave;
-      setReadOnly(!lock.held);
-      setSaveState("saved");
-      setActiveId(id);
-      await setSetting(SETTINGS_KEYS.lastOpenedDoc, id);
-      await refreshDocs();
     },
     [refreshDocs],
   );
@@ -239,7 +272,10 @@ export function App() {
     // typing never re-renders this tree — only the autosave is scheduled.
     const id = activeIdRef.current;
     if (id === null) return;
-    autosaveRef.current?.schedule(editor.getJSON(), editor.getText());
+    autosaveRef.current?.schedule(
+      () => editor.getJSON(),
+      () => editor.getText(),
+    );
     const now = Date.now();
     if (now - lastSnapshotCheckRef.current > 60_000) {
       lastSnapshotCheckRef.current = now;
@@ -341,9 +377,16 @@ export function App() {
     if (editor === null) return;
     let cancelled = false;
     const boot = async () => {
+      useSessionStore.getState().transition("loading");
       // Register uploaded fonts BEFORE rendering any document that uses
       // them, so there is no wrong-glyph flash (and offline reloads render).
       await registerStoredFonts();
+      if (cancelled) return;
+      // Fonts arriving later change glyph metrics: re-measure the layout
+      // once they finish so line breaks and cursor geometry settle.
+      if (editorRef.current !== null) {
+        remeasureAfterFontsLoad(editorRef.current);
+      }
       const [
         lastOpened,
         storedZoom,
@@ -605,9 +648,26 @@ export function App() {
 
   const handleRestoreFile = useCallback(
     async (file: File) => {
+      const editor = editorRef.current;
+      const session = useSessionStore.getState();
+      session.transition("switching");
+      // Exclusive operation: flush pending saves and freeze the surface so
+      // no keystroke can land mid-restore.
+      await autosaveRef.current?.flush();
+      const wasEditable = editor?.isEditable ?? true;
+      editor?.setEditable(false);
       setRestoring(true);
       try {
-        const { report } = await restoreBackup(file, restoreMode);
+        const { report } = await restoreBackup(file, restoreMode, undefined, {
+          // The pre-restore backup is delivered BEFORE the wipe, so a
+          // failed or regretted restore can always be undone.
+          onPreRestoreBackup: async (preRestoreBackup) => {
+            await deliverBackup(
+              preRestoreBackup,
+              `pre-restore-${backupFileName()}`,
+            );
+          },
+        });
         const items = await listDocs();
         setDocs(items);
         const current =
@@ -618,20 +678,44 @@ export function App() {
         if (current !== null) await openDoc(current);
         else if (items.length > 0) await openDoc(items[0]?.id as string);
         toast("Restore complete", {
-          description: `${report.docsRestored} docs, ${report.fontsRestored} fonts, ${report.imagesRestored} images (${report.mode}). A pre-restore backup was taken first.`,
+          description: `${report.docsRestored} docs, ${report.fontsRestored} fonts, ${report.imagesRestored} images (${report.mode}). The previous state was downloaded first.`,
         });
       } catch (error) {
+        session.transition("error", {
+          error: error instanceof Error ? error.message : "Restore failed.",
+        });
         toast("Restore failed", {
           description:
             error instanceof Error
               ? error.message
               : "That file could not be restored.",
         });
+        session.transition("ready");
+        // The failed restore never touched the editor content: unfreeze it.
+        if (editor !== null && !editor.isDestroyed) {
+          editor.setEditable(wasEditable);
+        }
       } finally {
         setRestoring(false);
       }
     },
     [openDoc, restoreMode],
+  );
+
+  const handleDuplicate = useCallback(
+    async (id: string) => {
+      const session = useSessionStore.getState();
+      session.transition("switching");
+      // Flush first so the copy includes the latest keystrokes.
+      await autosaveRef.current?.flush();
+      try {
+        await duplicateDoc(id);
+        await refreshDocs();
+      } finally {
+        session.transition("ready");
+      }
+    },
+    [refreshDocs],
   );
 
   const applyLink = useCallback(() => {
@@ -661,11 +745,18 @@ export function App() {
             type="button"
             className="inline-flex items-center gap-1 font-medium underline underline-offset-4"
             onClick={() => {
-              pwa.update().catch(() => {
-                toast("Update failed", {
-                  description: "Try again once your edits are saved.",
-                });
-              });
+              // "Update now" reloads the page: flush every pending save
+              // first so no keystroke is lost to the reload.
+              void (async () => {
+                await autosaveRef.current?.flush();
+                try {
+                  await pwa.update();
+                } catch {
+                  toast("Update failed", {
+                    description: "Try again once your edits are saved.",
+                  });
+                }
+              })();
             }}
           >
             <RefreshCw className="size-4" /> Update now
@@ -850,7 +941,7 @@ export function App() {
               void renameDoc(id, title).then(() => refreshDocs());
             }}
             onDuplicate={(id) => {
-              void duplicateDoc(id).then(() => refreshDocs());
+              void handleDuplicate(id);
             }}
             onDelete={(id) => void handleDelete(id)}
           />
