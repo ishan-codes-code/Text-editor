@@ -9,6 +9,12 @@ import {
   useRef,
   useState,
 } from "react";
+import { FindBar } from "./components/FindBar";
+import {
+  LAST_CUSTOM_FONT_KEY,
+  MAX_RECENT_GLYPHS,
+  PALETTE_RECENT_KEY,
+} from "./components/paletteGlyphs";
 import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { Button } from "./components/ui/button";
@@ -18,25 +24,34 @@ import { ensurePersistentStorage, initPwa } from "./pwa";
 import {
   Autosave,
   acquireDocLock,
+  addFont,
+  addImage,
   backupFileName,
   createBackup,
   createDoc,
   type DocListItem,
   type DocLock,
   deleteDoc,
+  deleteFont,
   deliverBackup,
   duplicateDoc,
+  type FontRecord,
+  FontValidationError,
   getDoc,
   getSetting,
   listDocs,
+  listFonts,
   maybeSnapshot,
+  prepareImage,
   recordBackupTime,
+  registerStoredFonts,
   renameDoc,
   restoreBackup,
   type SaveState,
   SETTINGS_KEYS,
   saveDocContent,
   searchDocs,
+  setDocTitleFont,
   setSetting,
 } from "./storage";
 
@@ -57,6 +72,16 @@ const SettingsSheet = lazy(() =>
 const LinkDialog = lazy(() =>
   import("./components/LinkDialog").then((module) => ({
     default: module.LinkDialog,
+  })),
+);
+const FontManager = lazy(() =>
+  import("./components/FontManager").then((module) => ({
+    default: module.FontManager,
+  })),
+);
+const CharPalette = lazy(() =>
+  import("./components/CharPalette").then((module) => ({
+    default: module.CharPalette,
   })),
 );
 
@@ -122,7 +147,16 @@ export function App() {
   const [chars, setChars] = useState(0);
   const [zoom, setZoom] = useState<string>("1");
   const [keepColors, setKeepColors] = useState(false);
-  const [knownFamilies] = useState<string[]>([]);
+  const [fonts, setFonts] = useState<FontRecord[]>([]);
+  const [fontError, setFontError] = useState<string | null>(null);
+  const [fontManagerOpen, setFontManagerOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteRecent, setPaletteRecent] = useState<string[]>([]);
+  const [defaultFont, setDefaultFont] = useState("");
+  const [findState, setFindState] = useState<{
+    open: boolean;
+    withReplace: boolean;
+  }>({ open: false, withReplace: false });
   const [lastBackup, setLastBackup] = useState<number | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
@@ -139,6 +173,11 @@ export function App() {
   const editorRef = useRef<Editor | null>(null);
   const lastSnapshotCheckRef = useRef(0);
   const backupFileRef = useRef<HTMLInputElement | null>(null);
+  const imageFileRef = useRef<HTMLInputElement | null>(null);
+
+  const refreshFonts = useCallback(async () => {
+    setFonts(await listFonts());
+  }, []);
 
   const refreshDocs = useCallback(async () => {
     const query = docQuery;
@@ -229,6 +268,67 @@ export function App() {
     setLinkOpen(true);
   }, []);
 
+  const toggleFont = useCallback(async () => {
+    const current = editorRef.current;
+    if (current === null || current.isDestroyed) return;
+    const uploaded = fonts.map((font) => font.family);
+    if (uploaded.length === 0) {
+      toast("No uploaded fonts", {
+        description: "Upload a font (for example Kruti Dev) first.",
+      });
+      setFontManagerOpen(true);
+      return;
+    }
+    const attrs = current.getAttributes("textStyle") as {
+      fontFamily?: string;
+    };
+    const currentFamily = attrs.fontFamily ?? "";
+    if (currentFamily !== "" && uploaded.includes(currentFamily)) {
+      // On a Hindi font: remember it and switch to the default English font.
+      await setSetting(LAST_CUSTOM_FONT_KEY, currentFamily);
+      if (defaultFont === "") current.chain().focus().unsetFontFamily().run();
+      else current.chain().focus().setFontFamily(defaultFont).run();
+    } else {
+      const lastCustom = await getSetting<string>(
+        LAST_CUSTOM_FONT_KEY,
+        uploaded[0] as string,
+      );
+      const target = uploaded.includes(lastCustom)
+        ? lastCustom
+        : (uploaded[0] as string);
+      await setSetting(LAST_CUSTOM_FONT_KEY, target);
+      current.chain().focus().setFontFamily(target).run();
+    }
+  }, [fonts, defaultFont]);
+
+  const handleImageFile = useCallback(async (file: File, atPos?: number) => {
+    const docId = activeIdRef.current;
+    const current = editorRef.current;
+    if (docId === null || current === null || current.isDestroyed) {
+      toast("No document open", {
+        description: "Open a document before adding images.",
+      });
+      return;
+    }
+    try {
+      const prepared = await prepareImage(file);
+      const record = await addImage(docId, prepared.blob, prepared.mime);
+      const node = {
+        type: "imageRef",
+        attrs: { imageId: record.id },
+      } as const;
+      if (atPos !== undefined) {
+        current.chain().focus().insertContentAt(atPos, node).run();
+      } else {
+        current.commands.insertImageRef(record.id);
+      }
+    } catch {
+      toast("Image failed", {
+        description: "That file could not be added.",
+      });
+    }
+  }, []);
+
   const { mountRef, editor } = useTiptapEditor({
     // Mount non-editable: openDoc enables editing once the document is
     // loaded. Otherwise keystrokes typed between mount and setContent
@@ -236,7 +336,11 @@ export function App() {
     editable: false,
     onUpdate: handleUpdate,
     onOpenLink: openLinkDialog,
-    getKnownFamilies: () => knownFamilies,
+    onOpenFind: (withReplace) => setFindState({ open: true, withReplace }),
+    onOpenPalette: () => setPaletteOpen(true),
+    onToggleFont: () => void toggleFont(),
+    onImageFile: (file, atPos) => void handleImageFile(file, atPos),
+    getKnownFamilies: () => fonts.map((font) => font.family),
     getKeepColors: () => keepColors,
   });
 
@@ -249,17 +353,33 @@ export function App() {
     if (editor === null) return;
     let cancelled = false;
     const boot = async () => {
-      const [lastOpened, storedZoom, storedColors, storedBackup] =
-        await Promise.all([
-          getSetting<string | null>(SETTINGS_KEYS.lastOpenedDoc, null),
-          getSetting<string>(SETTINGS_KEYS.zoom, "1"),
-          getSetting<boolean>(SETTINGS_KEYS.keepPastedColors, false),
-          getSetting<number | null>(SETTINGS_KEYS.lastBackup, null),
-        ]);
+      // Register uploaded fonts BEFORE rendering any document that uses
+      // them, so there is no wrong-glyph flash (and offline reloads render).
+      await registerStoredFonts();
+      const [
+        lastOpened,
+        storedZoom,
+        storedColors,
+        storedBackup,
+        storedFonts,
+        storedDefaultFont,
+        storedRecent,
+      ] = await Promise.all([
+        getSetting<string | null>(SETTINGS_KEYS.lastOpenedDoc, null),
+        getSetting<string>(SETTINGS_KEYS.zoom, "1"),
+        getSetting<boolean>(SETTINGS_KEYS.keepPastedColors, false),
+        getSetting<number | null>(SETTINGS_KEYS.lastBackup, null),
+        listFonts(),
+        getSetting<string>(SETTINGS_KEYS.defaultFont, ""),
+        getSetting<string[]>(PALETTE_RECENT_KEY, []),
+      ]);
       if (cancelled) return;
       setZoom(storedZoom);
       setKeepColors(storedColors);
       setLastBackup(storedBackup);
+      setFonts(storedFonts);
+      setDefaultFont(storedDefaultFont);
+      setPaletteRecent(storedRecent.slice(0, MAX_RECENT_GLYPHS));
       let items = await listDocs();
       if (items.length === 0) {
         const doc = await createDoc("Untitled");
@@ -376,8 +496,12 @@ export function App() {
     const doc = await createDoc("Untitled");
     await refreshDocs();
     await openDoc(doc.id);
+    // New documents start in the default font when one is set.
+    if (defaultFont !== "" && editorRef.current !== null) {
+      editorRef.current.chain().focus().setFontFamily(defaultFont).run();
+    }
     setDocsOpen(false);
-  }, [openDoc, refreshDocs]);
+  }, [openDoc, refreshDocs, defaultFont]);
 
   const handleDelete = useCallback(
     async (id: string) => {
@@ -407,6 +531,69 @@ export function App() {
     },
     [activeId, docs, openDoc],
   );
+
+  const handleUploadFont = useCallback(
+    async (file: File) => {
+      setFontError(null);
+      try {
+        const record = await addFont(file);
+        await refreshFonts();
+        await setSetting(LAST_CUSTOM_FONT_KEY, record.family);
+        toast("Font added", {
+          description: `${record.family} is ready and works offline.`,
+        });
+      } catch (error) {
+        const message =
+          error instanceof FontValidationError
+            ? error.message
+            : "That file could not be added.";
+        setFontError(message);
+      }
+    },
+    [refreshFonts],
+  );
+
+  const handleDeleteFont = useCallback(
+    async (id: string) => {
+      await deleteFont(id);
+      await refreshFonts();
+      toast("Font deleted", {
+        description:
+          "Existing text keeps the font name and falls back until the font is re-added.",
+      });
+    },
+    [refreshFonts],
+  );
+
+  const handleDefaultFontChange = useCallback((family: string) => {
+    setDefaultFont(family);
+    void setSetting(SETTINGS_KEYS.defaultFont, family);
+  }, []);
+
+  const activeTitleFont =
+    docs.find((doc) => doc.id === activeId)?.titleFont ?? null;
+
+  const handleTitleFontChange = useCallback(
+    async (family: string | null) => {
+      const id = activeIdRef.current;
+      if (id === null) return;
+      await setDocTitleFont(id, family);
+      await refreshDocs();
+    },
+    [refreshDocs],
+  );
+
+  const handleInsertGlyph = useCallback((glyph: string) => {
+    editorRef.current?.chain().focus().insertContent(glyph).run();
+    setPaletteRecent((previous) => {
+      const next = [glyph, ...previous.filter((item) => item !== glyph)].slice(
+        0,
+        MAX_RECENT_GLYPHS,
+      );
+      void setSetting(PALETTE_RECENT_KEY, next);
+      return next;
+    });
+  }, []);
 
   const handleBackup = useCallback(async () => {
     try {
@@ -581,6 +768,16 @@ export function App() {
             <Toolbar
               editor={editor}
               onOpenLink={openLinkDialog}
+              onOpenFind={() =>
+                setFindState((state) => ({
+                  open: !state.open,
+                  withReplace: state.withReplace,
+                }))
+              }
+              onOpenPalette={() => setPaletteOpen(true)}
+              onToggleFont={() => void toggleFont()}
+              onManageFonts={() => setFontManagerOpen(true)}
+              onInsertImage={() => imageFileRef.current?.click()}
               onSave={() => void flushNow()}
               saveLabel={
                 saveState === "saving"
@@ -591,10 +788,31 @@ export function App() {
                       ? "Retry"
                       : "Saved"
               }
+              families={fonts.map((font) => font.family)}
+            />
+            <input
+              ref={imageFileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              aria-label="Choose image"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (file !== undefined) void handleImageFile(file);
+              }}
             />
           </div>
         </div>
       </header>
+
+      {findState.open && editor !== null && (
+        <FindBar
+          editor={editor}
+          withReplace={findState.withReplace}
+          onClose={() => setFindState((state) => ({ ...state, open: false }))}
+        />
+      )}
 
       <main className="bg-muted/60 px-4 py-6 print:bg-white print:p-0">
         <div className="mx-auto w-full max-w-[210mm]">
@@ -681,6 +899,39 @@ export function App() {
             url={linkUrl}
             onUrlChange={setLinkUrl}
             onApply={applyLink}
+          />
+        </Suspense>
+      )}
+      {fontManagerOpen && (
+        <Suspense fallback={null}>
+          <FontManager
+            open={fontManagerOpen}
+            onOpenChange={setFontManagerOpen}
+            fonts={fonts}
+            defaultFont={defaultFont}
+            onDefaultFontChange={handleDefaultFontChange}
+            titleFont={activeTitleFont}
+            onTitleFontChange={(family) => void handleTitleFontChange(family)}
+            error={fontError}
+            onUpload={(file) => void handleUploadFont(file)}
+            onDelete={(id) => void handleDeleteFont(id)}
+          />
+        </Suspense>
+      )}
+      {paletteOpen && (
+        <Suspense fallback={null}>
+          <CharPalette
+            open={paletteOpen}
+            onOpenChange={setPaletteOpen}
+            activeFamily={
+              (
+                editor?.getAttributes("textStyle") as
+                  | { fontFamily?: string }
+                  | undefined
+              )?.fontFamily ?? null
+            }
+            recent={paletteRecent}
+            onInsert={handleInsertGlyph}
           />
         </Suspense>
       )}

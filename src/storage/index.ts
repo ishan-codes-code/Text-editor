@@ -19,6 +19,30 @@ export {
   setDocTitleFont,
 } from "./documents";
 export {
+  addFont,
+  deleteFont,
+  FontValidationError,
+  listFonts,
+  MAX_FONT_BYTES,
+  readFontFamily,
+  registerFontFace,
+  registerStoredFonts,
+  sniffFontFormat,
+  type ValidatedFont,
+  validateFontFile,
+} from "./fonts";
+export {
+  addImage,
+  clearImageURLCacheForTests,
+  deleteImage,
+  getImage,
+  imageObjectURL,
+  MAX_IMAGE_EDGE,
+  type PreparedImage,
+  prepareImage,
+  revokeImageURL,
+} from "./images";
+export {
   acquireDocLock,
   type DocLock,
   docLockName,

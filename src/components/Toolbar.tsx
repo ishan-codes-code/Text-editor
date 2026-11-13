@@ -6,10 +6,13 @@ import {
   AlignRight,
   Bold,
   Code,
+  Columns3,
   Highlighter,
+  ImagePlus,
   IndentDecrease,
   IndentIncrease,
   Italic,
+  Languages,
   Link as LinkIcon,
   List,
   ListChecks,
@@ -18,11 +21,15 @@ import {
   Pilcrow,
   Quote,
   Redo,
+  Rows3,
   Save,
   Scissors,
+  Search,
   Strikethrough,
   Subscript,
   Superscript,
+  Table,
+  Trash2,
   Underline,
   Undo,
 } from "lucide-preact";
@@ -46,13 +53,19 @@ function useEditorTick(editor: Editor | null): void {
 export interface ToolbarProps {
   editor: Editor | null;
   onOpenLink: () => void;
+  onOpenFind: () => void;
+  onOpenPalette: () => void;
+  onToggleFont: () => void;
+  onManageFonts: () => void;
+  onInsertImage: () => void;
   onSave: () => void;
   saveLabel: string;
+  /** Uploaded font families for the font dropdown. */
+  families: string[];
 }
 
 const FONT_SIZES = ["12", "14", "16", "18", "20", "24", "28", "32"];
 const LINE_HEIGHTS = ["1", "1.15", "1.5", "2"];
-const SYSTEM_FONTS = ["", "System default", "Serif", "Monospace"];
 
 function ToolButton({
   label,
@@ -90,8 +103,14 @@ function Separator() {
 export function Toolbar({
   editor,
   onOpenLink,
+  onOpenFind,
+  onOpenPalette,
+  onToggleFont,
+  onManageFonts,
+  onInsertImage,
   onSave,
   saveLabel,
+  families,
 }: ToolbarProps) {
   useEditorTick(editor);
   if (editor === null) return null;
@@ -219,21 +238,35 @@ export function Toolbar({
       <select
         id="toolbar-font"
         aria-label="Font family"
-        className="h-9 rounded-md border border-input bg-background px-1 text-sm"
+        className="h-9 max-w-36 rounded-md border border-input bg-background px-1 text-sm"
         value={textStyle.fontFamily ?? ""}
         onChange={(event) => {
           const value = event.currentTarget.value;
-          // Phase 4 populates uploaded families; system fonts pass through.
           if (value === "") editor.chain().focus().unsetFontFamily().run();
+          else if (value === "@manage") onManageFonts();
           else editor.chain().focus().setFontFamily(value).run();
         }}
       >
-        {SYSTEM_FONTS.map((font) => (
-          <option key={font} value={font === "System default" ? "" : font}>
-            {font === "" ? "Font" : font}
+        <option value="">Font</option>
+        <option value="Serif">Serif</option>
+        <option value="Monospace">Monospace</option>
+        {families.map((family) => (
+          <option key={family} value={family}>
+            {family}
           </option>
         ))}
+        <option value="@manage">Manage fonts…</option>
       </select>
+      <Button
+        variant="outline"
+        size="sm"
+        aria-label="Toggle Hindi/English font (Ctrl+Shift+K)"
+        title="Toggle Hindi/English font (Ctrl+Shift+K)"
+        onClick={onToggleFont}
+        className="shrink-0"
+      >
+        A/अ
+      </Button>
       <label className="sr-only" htmlFor="toolbar-size">
         Font size
       </label>
@@ -422,6 +455,67 @@ export function Toolbar({
         onPress={() => editor.chain().focus().insertPageBreak().run()}
       >
         <Pilcrow />
+      </ToolButton>
+      <Separator />
+      <ToolButton
+        label="Insert table (3x3)"
+        title="Insert table (3x3)"
+        active={editor.isActive("table")}
+        onPress={() =>
+          editor
+            .chain()
+            .focus()
+            .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+            .run()
+        }
+      >
+        <Table />
+      </ToolButton>
+      <ToolButton
+        label="Add row below"
+        title="Add row below"
+        disabled={!editor.can().addRowAfter()}
+        onPress={() => editor.chain().focus().addRowAfter().run()}
+      >
+        <Rows3 />
+      </ToolButton>
+      <ToolButton
+        label="Add column after"
+        title="Add column after"
+        disabled={!editor.can().addColumnAfter()}
+        onPress={() => editor.chain().focus().addColumnAfter().run()}
+      >
+        <Columns3 />
+      </ToolButton>
+      <ToolButton
+        label="Delete table"
+        title="Delete table"
+        disabled={!editor.can().deleteTable()}
+        onPress={() => editor.chain().focus().deleteTable().run()}
+      >
+        <Trash2 />
+      </ToolButton>
+      <ToolButton
+        label="Insert image"
+        title="Insert image (resized to 1600 px, stored offline)"
+        onPress={onInsertImage}
+      >
+        <ImagePlus />
+      </ToolButton>
+      <Separator />
+      <ToolButton
+        label="Find and replace (Ctrl+F)"
+        title="Find and replace (Ctrl+F)"
+        onPress={onOpenFind}
+      >
+        <Search />
+      </ToolButton>
+      <ToolButton
+        label="Special characters"
+        title="Special characters (Ctrl+Shift+P)"
+        onPress={onOpenPalette}
+      >
+        <Languages />
       </ToolButton>
       <Separator />
       <Button
