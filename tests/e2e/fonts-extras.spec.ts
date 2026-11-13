@@ -55,6 +55,14 @@ test("font upload, dropdown, toggle, palette, and offline reload", async ({
     /not a font|header/i,
   );
   await page.keyboard.press("Escape");
+  // The drawer animates closed (~500 ms) and focus returns to the editor
+  // only at unmount: wait for hidden, or keystrokes land in the dying
+  // drawer and are lost.
+  await expect(page.getByRole("dialog")).toBeHidden();
+
+  // Focus return lands on the toolbar trigger by design: click back into
+  // the editor before typing instead of relying on focus timing.
+  await editor.click();
 
   // Apply the font to typed text via the toolbar dropdown.
   await page.keyboard.type("hindi");
@@ -169,12 +177,14 @@ test("digit/space font names render: upload, select, computed style", async ({
   // Upload the renamed fixture (internal family "Test 010") through the
   // font manager: upload validation reads the name table, not the filename.
   await page.getByLabel("Font family").selectOption("@manage");
-  await expect(page.locator("dialog[open]")).toContainText("Fonts");
+  await expect(page.getByRole("dialog")).toContainText("Fonts");
   await page
     .locator('input[aria-label="Choose font file"]')
     .setInputFiles(FIXTURE_FONT_010);
-  await expect(page.locator("dialog[open]")).toContainText("Test 010");
+  await expect(page.getByRole("dialog")).toContainText("Test 010");
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await editor.click();
 
   // Select the digit-named font and type: the declaration must survive as
   // valid CSS (unquoted `010` invalidated it and the browser fell back).

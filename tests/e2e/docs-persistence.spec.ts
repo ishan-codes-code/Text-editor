@@ -37,6 +37,13 @@ test("killed mid-typing loses at most the debounce window", async ({
   // flush saves the second chunk on a best-effort basis, but unload timing
   // makes that racy by nature, so it is not asserted).
   await page.keyboard.type("first chunk");
+  // The idle label already reads "Saved": wait for the schedule to flip it
+  // to dirty first, otherwise the Saved wait below passes vacuously and the
+  // reload can win the race against the write under parallel load.
+  await expect(page.getByTestId("save-status")).toContainText(
+    /Unsaved|Saving/,
+    { timeout: 5000 },
+  );
   await expect(page.getByTestId("save-status")).toContainText(/Saved/, {
     timeout: 5000,
   });

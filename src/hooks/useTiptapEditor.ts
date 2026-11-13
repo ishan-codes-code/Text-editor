@@ -1,4 +1,5 @@
 import type { AnyExtension, Editor, JSONContent } from "@tiptap/core";
+import { Selection } from "@tiptap/pm/state";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createEditorExtensions } from "../editor/extensions";
@@ -110,6 +111,44 @@ export function useTiptapEditor(options: TiptapEditorOptions = {}) {
       content: contentRef.current,
       editable,
       editorProps: {
+        handleDOMEvents: {
+          // ProseMirror only adopts the native caret while the editor is
+          // focused: a tap that starts unfocused (toolbar button, palette)
+          // moves the DOM caret but leaves editor state on the old range,
+          // so the next palette/shortcut insert replaces the whole
+          // document. Focus first so the native caret is adopted.
+          // Clicks in empty canvas areas (below the last paragraph,
+          // padding) resolve no position at all: collapse those to the
+          // nearest edge instead of letting the caret diverge.
+          mousedown: (view, event) => {
+            if (
+              !view.editable ||
+              event.button !== 0 ||
+              event.shiftKey ||
+              event.ctrlKey ||
+              event.metaKey
+            ) {
+              return false;
+            }
+            if (!view.hasFocus()) {
+              view.focus();
+            }
+            const pos = view.posAtCoords({
+              left: event.clientX,
+              top: event.clientY,
+            });
+            if (pos !== null && pos !== undefined) return false;
+            const end = view.coordsAtPos(view.state.doc.content.size);
+            const selection =
+              event.clientY >= end.top
+                ? Selection.atEnd(view.state.doc)
+                : Selection.atStart(view.state.doc);
+            view.dispatch(view.state.tr.setSelection(selection));
+            view.focus();
+            event.preventDefault();
+            return true;
+          },
+        },
         attributes: {
           class: "tiptap",
           // Kruti Dev rule (TRD): the Android keyboard must not rewrite

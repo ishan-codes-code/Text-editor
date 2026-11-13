@@ -212,7 +212,11 @@ export function Toolbar({
     <div
       role="toolbar"
       aria-label="Formatting"
-      className="flex items-center gap-0.5 overflow-x-auto px-4 py-1.5"
+      // relative: containing block for the absolutely-positioned sr-only
+      // color inputs. Without it they anchor to the initial containing
+      // block at their scrolled static position, stretching the document
+      // wider than the viewport (fixed overlays then misposition).
+      className="relative flex items-center gap-0.5 overflow-x-auto px-4 py-1.5"
     >
       <ToolButton
         label="Undo (Ctrl+Z)"

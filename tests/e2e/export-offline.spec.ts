@@ -30,9 +30,11 @@ test("export and import work, including DOCX while offline", async ({
     timeout: 5000,
   });
 
-  const openSheet = page.locator("dialog[open]");
+  const openSheet = page.getByRole("dialog");
   await page.getByRole("button", { name: /export or import/i }).click();
-  await expect(openSheet).toContainText("Export this document");
+  await expect(openSheet).toContainText(
+    "Export \u201cUntitled\u201d (works offline)",
+  );
 
   // TXT export fires a Blob download while online.
   const txtButton = openSheet.getByRole("button", { name: "TXT", exact: true });
@@ -59,8 +61,10 @@ test("export and import work, including DOCX while offline", async ({
 
   // DOCX export works offline: the vendor chunk was precached at install.
   await page.getByRole("button", { name: /export or import/i }).click();
-  const offlineSheet = page.locator("dialog[open]");
-  await expect(offlineSheet).toContainText("Export this document");
+  const offlineSheet = page.getByRole("dialog");
+  await expect(offlineSheet).toContainText(
+    "Export \u201cUntitled\u201d (works offline)",
+  );
   const docxButton = offlineSheet.getByRole("button", {
     name: "DOCX",
     exact: true,

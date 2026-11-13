@@ -126,7 +126,7 @@ export function App() {
   const lastSnapshotCheckRef = useRef(0);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
   const importFileRef = useRef<HTMLInputElement | null>(null);
-  const canvasWrapRef = useRef<HTMLElement | null>(null);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const docsRef = useRef<DocListItem[]>([]);
   docsRef.current = docs;
   const fontsRef = useRef<FontRecord[]>([]);
@@ -309,7 +309,7 @@ export function App() {
     });
   }, [applyLink]);
 
-  const toggleFont = useCallback(async () => {
+  const toggleFont = useCallback(() => {
     const current = editorRef.current;
     if (current === null || current.isDestroyed) return;
     const uploaded = fonts.map((font) => font.family);
@@ -320,16 +320,21 @@ export function App() {
       openFontManager();
       return;
     }
+    // Apply to the editor synchronously: awaiting storage first would let
+    // the next click interleave mid-toggle and leave ProseMirror with a
+    // stale selection (the next palette insert then replaces the doc).
     const attrs = current.getAttributes("textStyle") as {
       fontFamily?: string;
     };
     const currentFamily = attrs.fontFamily ?? "";
     if (currentFamily !== "" && uploaded.includes(currentFamily)) {
-      // On a Hindi font: remember it and switch to the default English font.
-      await setSetting(LAST_CUSTOM_FONT_KEY, currentFamily);
+      // On a Hindi font: switch back to the default English font.
       if (defaultFont === "") current.chain().focus().unsetFontFamily().run();
       else current.chain().focus().setFontFamily(defaultFont).run();
-    } else {
+      void setSetting(LAST_CUSTOM_FONT_KEY, currentFamily);
+      return;
+    }
+    void (async () => {
       const lastCustom = await getSetting<string>(
         LAST_CUSTOM_FONT_KEY,
         uploaded[0] as string,
@@ -337,10 +342,12 @@ export function App() {
       const target = uploaded.includes(lastCustom)
         ? lastCustom
         : (uploaded[0] as string);
+      const live = editorRef.current;
+      if (live === null || live.isDestroyed) return;
+      live.chain().focus().setFontFamily(target).run();
       await setSetting(LAST_CUSTOM_FONT_KEY, target);
-      current.chain().focus().setFontFamily(target).run();
-    }
-  }, [fonts, defaultFont, openFontManager]);
+    })();
+  }, [defaultFont, fonts, openFontManager]);
 
   const handleImageFile = useCallback(async (file: File, atPos?: number) => {
     const docId = activeIdRef.current;
@@ -880,12 +887,17 @@ export function App() {
 
   // Fit-to-width (default): scale the A4 canvas to its container, capped at
   // 1 so wide screens never upscale. Fixed percentages skip measuring.
+  // The observer watches the UNZOOMED wrapper: measuring the zoomed section
+  // itself feeds its own zoom back into clientWidth (Chrome reports the
+  // unscaled layout width), which oscillates fitScale forever — the editor
+  // box never stabilizes and every click times out.
   useEffect(() => {
     if (zoom !== "fit") return;
     const target = canvasWrapRef.current;
     if (target === null) return;
     const measure = () => {
-      setFitScale(Math.min(1, target.clientWidth / 794));
+      const next = Math.min(1, target.clientWidth / 794);
+      setFitScale((prev) => (Math.abs(next - prev) < 0.001 ? prev : next));
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -1087,10 +1099,9 @@ export function App() {
           style={{ scrollbarGutter: "stable" }}
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/60 px-4 py-6 print:overflow-visible print:bg-white print:p-0"
         >
-          <div className="mx-auto w-full max-w-[210mm]">
+          <div ref={canvasWrapRef} className="mx-auto w-full max-w-[210mm]">
             <section
               aria-label="Editor"
-              ref={canvasWrapRef}
               className="rounded-sm bg-card px-6 py-8 text-card-foreground shadow-sm print:rounded-none print:shadow-none sm:px-10"
               style={{ zoom: zoomFactor } as React.CSSProperties}
             >

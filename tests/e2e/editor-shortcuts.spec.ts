@@ -176,12 +176,8 @@ test("Ctrl+S saves and confirms", async ({ page }) => {
   await readyEditor(page);
   await page.keyboard.type("save me");
   await page.keyboard.press("ControlOrMeta+s");
-  await expect(
-    page
-      .getByTestId("toaster")
-      .getByRole("status")
-      .filter({ hasText: "Saved" }),
-  ).toBeVisible();
+  // sonner's toasts carry no role; assert the toast text instead.
+  await expect(page.getByTestId("toaster").getByText("Saved")).toBeVisible();
   await expect(page.getByTestId("save-status")).toContainText(/Saved/, {
     timeout: 5000,
   });

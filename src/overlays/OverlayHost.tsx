@@ -1,3 +1,4 @@
+import { FocusScope } from "@radix-ui/react-focus-scope";
 import { useEffect, useState } from "react";
 import {
   Dialog,
@@ -160,14 +161,28 @@ export function OverlayHost() {
   if (!isDesktop) {
     return (
       <Drawer open onOpenChange={close}>
-        <DrawerContent className="max-h-[100dvh]">
-          <DrawerHeader className="shrink-0 text-left">
-            <DrawerTitle>{top.title}</DrawerTitle>
-            {top.description !== undefined && (
-              <DrawerDescription>{top.description}</DrawerDescription>
-            )}
-          </DrawerHeader>
-          {body}
+        <DrawerContent
+          className="max-h-[100dvh]"
+          onKeyDown={(event) => {
+            // vaul handles drag-to-dismiss; Escape parity with the Radix
+            // Dialog/Sheet branches closes only the top item.
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              useOverlayStore.getState().closeTopOverlay();
+            }
+          }}
+        >
+          <FocusScope trapped asChild>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <DrawerHeader className="shrink-0 text-left">
+                <DrawerTitle>{top.title}</DrawerTitle>
+                {top.description !== undefined && (
+                  <DrawerDescription>{top.description}</DrawerDescription>
+                )}
+              </DrawerHeader>
+              {body}
+            </div>
+          </FocusScope>
         </DrawerContent>
       </Drawer>
     );

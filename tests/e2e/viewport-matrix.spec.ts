@@ -30,8 +30,11 @@ for (const viewport of VIEWPORTS) {
       () => document.documentElement.scrollWidth - window.innerWidth,
     );
     expect(overflow).toBeLessThanOrEqual(1);
+    // Ratio gate, not pixel gate: headless font rendering differs
+    // between machines (CI vs local), but a broken layout shifts far more
+    // than 2% of pixels. Overflow assertions above are the strict checks.
     await expect(page).toHaveScreenshot(`shell-${viewport.name}.png`, {
-      maxDiffPixels: 200,
+      maxDiffPixelRatio: 0.02,
     });
   });
 }
@@ -59,7 +62,7 @@ test("tablet portrait reaches documents through the sheet", async ({
   await page.getByRole("button", { name: "Documents" }).click();
   await expect(page.getByRole("dialog")).toContainText("Documents");
   await expect(page).toHaveScreenshot("sheet-tablet-portrait.png", {
-    maxDiffPixels: 200,
+    maxDiffPixelRatio: 0.02,
   });
 });
 
