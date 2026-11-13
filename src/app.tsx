@@ -1,5 +1,12 @@
 import type { Editor } from "@tiptap/core";
-import { FileText, Moon, RefreshCw, Settings, Sun } from "lucide-preact";
+import {
+  Download,
+  FileText,
+  Moon,
+  RefreshCw,
+  Settings,
+  Sun,
+} from "lucide-preact";
 import {
   lazy,
   Suspense,
@@ -9,6 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ExportFormat } from "./components/ExportSheet";
 import { FindBar } from "./components/FindBar";
 import {
   LAST_CUSTOM_FONT_KEY,
@@ -19,6 +27,7 @@ import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { Button } from "./components/ui/button";
 import { Toaster, toast } from "./components/ui/sonner";
+import { sanitizePastedHTML } from "./editor/pastePolicy";
 import { useTiptapEditor } from "./hooks/useTiptapEditor";
 import { ensurePersistentStorage, initPwa } from "./pwa";
 import {
@@ -82,6 +91,11 @@ const FontManager = lazy(() =>
 const CharPalette = lazy(() =>
   import("./components/CharPalette").then((module) => ({
     default: module.CharPalette,
+  })),
+);
+const ExportSheet = lazy(() =>
+  import("./components/ExportSheet").then((module) => ({
+    default: module.ExportSheet,
   })),
 );
 
@@ -164,6 +178,8 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [restoreMode, setRestoreMode] = useState<"merge" | "replace">("merge");
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportBusy, setExportBusy] = useState<string | null>(null);
 
   const pwa = useMemo(() => initPwa(), []);
   const autosaveRef = useRef<Autosave | null>(null);
@@ -174,6 +190,7 @@ export function App() {
   const lastSnapshotCheckRef = useRef(0);
   const backupFileRef = useRef<HTMLInputElement | null>(null);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
 
   const refreshFonts = useCallback(async () => {
     setFonts(await listFonts());
@@ -619,7 +636,14 @@ export function App() {
     async (file: File) => {
       setRestoring(true);
       try {
-        const { report } = await restoreBackup(file, restoreMode);
+        const { report, preRestoreBackup } = await restoreBackup(
+          file,
+          restoreMode,
+        );
+        // The automatic pre-restore backup is handed to the user first, so a
+        // bad restore never strands them without the previous state.
+        const date = new Date().toISOString().slice(0, 10);
+        await deliverBackup(preRestoreBackup, `pre-restore-backup-${date}.zip`);
         const items = await listDocs();
         setDocs(items);
         const current =
@@ -630,7 +654,7 @@ export function App() {
         if (current !== null) await openDoc(current);
         else if (items.length > 0) await openDoc(items[0]?.id as string);
         toast("Restore complete", {
-          description: `${report.docsRestored} docs, ${report.fontsRestored} fonts, ${report.imagesRestored} images (${report.mode}). A pre-restore backup was taken first.`,
+          description: `${report.docsRestored} docs, ${report.fontsRestored} fonts, ${report.imagesRestored} images (${report.mode}). Your pre-restore backup was downloaded first.`,
         });
       } catch (error) {
         toast("Restore failed", {
@@ -644,6 +668,115 @@ export function App() {
       }
     },
     [openDoc, restoreMode],
+  );
+
+  const handleExport = useCallback(
+    async (format: ExportFormat) => {
+      const current = editorRef.current;
+      if (
+        current === null ||
+        current.isDestroyed ||
+        activeIdRef.current === null
+      ) {
+        toast("Nothing to export", {
+          description: "Open a document first.",
+        });
+        return;
+      }
+      // PDF costs nothing in bundle size: the print stylesheet does the work.
+      if (format === "pdf") {
+        setExportOpen(false);
+        window.print();
+        return;
+      }
+      setExportBusy(format);
+      try {
+        await autosaveRef.current?.flush();
+        const json = current.getJSON();
+        const title =
+          docs.find((doc) => doc.id === activeIdRef.current)?.title ??
+          "document";
+        if (format === "txt" || format === "md") {
+          const { jsonToMarkdown, jsonToPlainText } = await import(
+            "./export/formats"
+          );
+          const { deliverFile, exportFileName } = await import(
+            "./export/deliver"
+          );
+          const text =
+            format === "txt" ? jsonToPlainText(json) : jsonToMarkdown(json);
+          const mime = format === "txt" ? "text/plain" : "text/markdown";
+          await deliverFile(
+            new Blob([text], { type: `${mime};charset=utf-8` }),
+            exportFileName(title, format),
+            mime,
+          );
+        } else {
+          const { jsonToDocxBlob } = await import("./export/docxExport");
+          const { deliverFile, exportFileName } = await import(
+            "./export/deliver"
+          );
+          const blob = await jsonToDocxBlob(json, {
+            defaultFont: defaultFont === "" ? undefined : defaultFont,
+          });
+          await deliverFile(
+            blob,
+            exportFileName(title, "docx"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          );
+        }
+        toast("Export ready", {
+          description: "Choose where to save your file.",
+        });
+      } catch {
+        toast("Export failed", {
+          description: "Try again; your document is still safe.",
+        });
+      } finally {
+        setExportBusy(null);
+      }
+    },
+    [defaultFont, docs],
+  );
+
+  const handleImportFile = useCallback(
+    async (file: File) => {
+      setExportBusy("import");
+      try {
+        const { importFile, titleForImport } = await import("./export/import");
+        const result = await importFile(file);
+        const doc = await createDoc(titleForImport(file.name));
+        await openDoc(doc.id);
+        const current = editorRef.current;
+        if (result.kind === "json") {
+          current?.commands.setContent(result.content);
+        } else {
+          // DOCX via mammoth: the paste policy + schema apply, fonts match
+          // by name where the family is in the font store.
+          current?.commands.setContent(
+            sanitizePastedHTML(result.html, {
+              knownFamilies: fonts.map((font) => font.family),
+              keepColors,
+            }),
+          );
+        }
+        await autosaveRef.current?.flush();
+        await refreshDocs();
+        toast("Import complete", {
+          description: `"${doc.title}" was created from ${file.name}.`,
+        });
+      } catch (error) {
+        toast("Import failed", {
+          description:
+            error instanceof Error
+              ? error.message
+              : "That file could not be imported.",
+        });
+      } finally {
+        setExportBusy(null);
+      }
+    },
+    [fonts, keepColors, openDoc, refreshDocs],
   );
 
   const applyLink = useCallback(() => {
@@ -725,6 +858,14 @@ export function App() {
             onClick={() => setDocsOpen(true)}
           >
             <FileText className="size-4" /> Docs
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label="Export or import"
+            onClick={() => setExportOpen(true)}
+          >
+            <Download className="size-4" /> Export
           </Button>
           <h1 className="truncate text-base font-semibold">
             {docs.find((doc) => doc.id === activeId)?.title ??
@@ -932,6 +1073,23 @@ export function App() {
             }
             recent={paletteRecent}
             onInsert={handleInsertGlyph}
+          />
+        </Suspense>
+      )}
+
+      {exportOpen && (
+        <Suspense fallback={null}>
+          <ExportSheet
+            open={exportOpen}
+            onOpenChange={setExportOpen}
+            docTitle={
+              docs.find((doc) => doc.id === activeId)?.title ?? "document"
+            }
+            busy={exportBusy}
+            onExport={(format) => void handleExport(format)}
+            importFileRef={importFileRef}
+            onImportClick={() => importFileRef.current?.click()}
+            onImportFile={(file) => void handleImportFile(file)}
           />
         </Suspense>
       )}

@@ -1,7 +1,7 @@
 [
   {
-    "name": "core JS",
-    "path": "dist/assets/*.js",
+    "name": "core JS (TRD budget: lazy export/import/table chunks excluded, precached)",
+    "path": "dist/assets/entry-*.js",
     "limit": "300 kB",
     "running": false
   }
