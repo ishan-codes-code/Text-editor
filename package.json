@@ -76,6 +76,7 @@
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.10",
     "fake-indexeddb": "^4.0.0",
     "jsdom": "^24.0.0",
     "shadcn": "^4.23.0",
