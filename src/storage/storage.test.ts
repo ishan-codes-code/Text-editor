@@ -150,22 +150,21 @@ describe("documents", () => {
       db,
     );
     const copy = await duplicateDoc(doc.id, db);
-    expect(copy).not.toBeUndefined();
-    const copyContent = JSON.stringify(copy?.content);
+    if (copy === undefined) throw new Error("duplicateDoc returned undefined");
+    const copyContent = JSON.stringify(copy.content);
     // The copy references a NEW image id, never the original's.
     expect(copyContent).not.toContain(imageId);
-    const copyImages = await db.images
-      .where("docId")
-      .equals(copy!.id)
-      .toArray();
+    const copyImages = await db.images.where("docId").equals(copy.id).toArray();
     expect(copyImages).toHaveLength(1);
-    expect(copyImages[0]?.id).not.toBe(imageId);
-    expect(copyContent).toContain(copyImages[0]?.id ?? "missing");
+    const copyImageId = copyImages[0]?.id;
+    expect(copyImageId).toBeDefined();
+    expect(copyImageId).not.toBe(imageId);
+    expect(copyContent).toContain(copyImageId);
     // Deleting the original (and its images) leaves the copy intact.
     await deleteDoc(doc.id, db);
-    expect(await db.images.where("docId").equals(copy!.id).count()).toBe(1);
-    expect(JSON.stringify((await getDoc(copy!.id, db))?.content)).toContain(
-      copyImages[0]?.id ?? "missing",
+    expect(await db.images.where("docId").equals(copy.id).count()).toBe(1);
+    expect(JSON.stringify((await getDoc(copy.id, db))?.content)).toContain(
+      copyImageId,
     );
   });
 

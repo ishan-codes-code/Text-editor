@@ -240,6 +240,55 @@ export function App() {
     }
   }, []);
 
+  const handleDefaultFontChange = useCallback((family: string) => {
+    setDefaultFont(family);
+    void setSetting(SETTINGS_KEYS.defaultFont, family);
+  }, []);
+
+  const handleTitleFontChange = useCallback(
+    async (family: string | null) => {
+      const id = activeIdRef.current;
+      if (id === null) return;
+      await setDocTitleFont(id, family);
+      await refreshDocs();
+    },
+    [refreshDocs],
+  );
+
+  const applyLink = useCallback((url: string) => {
+    const current = editorRef.current;
+    const href = url.trim();
+    if (current !== null) {
+      if (href === "") current.chain().focus().unsetLink().run();
+      else current.chain().focus().setLink({ href }).run();
+    }
+    useOverlayStore.getState().closeOverlay("link");
+  }, []);
+
+  const openFontManager = useCallback(() => {
+    const titleFont =
+      docsRef.current.find((doc) => doc.id === activeIdRef.current)
+        ?.titleFont ?? null;
+    useOverlayStore.getState().openOverlay({
+      id: "fonts",
+      kind: "sheet",
+      side: "right",
+      title: "Fonts",
+      description:
+        "Uploaded TTF/OTF fonts work offline. Kruti Dev is added like any other font.",
+      render: () => (
+        <FontPanel
+          fonts={fontsRef.current}
+          defaultFont={defaultFontRef.current}
+          onDefaultFontChange={handleDefaultFontChange}
+          titleFont={titleFont}
+          onTitleFontChange={(family) => void handleTitleFontChange(family)}
+          onChanged={() => void refreshFonts()}
+        />
+      ),
+    });
+  }, [handleDefaultFontChange, handleTitleFontChange, refreshFonts]);
+
   const openLinkDialog = useCallback(() => {
     const editor = editorRef.current;
     const attrs = editor?.getAttributes("link") as
@@ -258,7 +307,7 @@ export function App() {
         />
       ),
     });
-  }, []);
+  }, [applyLink]);
 
   const toggleFont = useCallback(async () => {
     const current = editorRef.current;
@@ -291,7 +340,7 @@ export function App() {
       await setSetting(LAST_CUSTOM_FONT_KEY, target);
       current.chain().focus().setFontFamily(target).run();
     }
-  }, [fonts, defaultFont]);
+  }, [fonts, defaultFont, openFontManager]);
 
   const handleImageFile = useCallback(async (file: File, atPos?: number) => {
     const docId = activeIdRef.current;
@@ -533,21 +582,6 @@ export function App() {
     void setSetting(SETTINGS_KEYS.keepPastedColors, value);
   }, []);
 
-  const handleDefaultFontChange = useCallback((family: string) => {
-    setDefaultFont(family);
-    void setSetting(SETTINGS_KEYS.defaultFont, family);
-  }, []);
-
-  const handleTitleFontChange = useCallback(
-    async (family: string | null) => {
-      const id = activeIdRef.current;
-      if (id === null) return;
-      await setDocTitleFont(id, family);
-      await refreshDocs();
-    },
-    [refreshDocs],
-  );
-
   const handleInsertGlyph = useCallback((glyph: string) => {
     editorRef.current?.chain().focus().insertContent(glyph).run();
   }, []);
@@ -641,16 +675,6 @@ export function App() {
     [refreshDocs],
   );
 
-  const applyLink = useCallback((url: string) => {
-    const current = editorRef.current;
-    const href = url.trim();
-    if (current !== null) {
-      if (href === "") current.chain().focus().unsetLink().run();
-      else current.chain().focus().setLink({ href }).run();
-    }
-    useOverlayStore.getState().closeOverlay("link");
-  }, []);
-
   const openDocs = useCallback(() => {
     useOverlayStore.getState().openOverlay({
       id: "docs",
@@ -693,44 +717,7 @@ export function App() {
         />
       ),
     });
-  }, [
-    handleBackup,
-    handleKeepColorsChange,
-    handleRestoreFile,
-    keepColors,
-    lastBackup,
-    persisted,
-  ]);
-
-  const openFontManager = useCallback(() => {
-    const titleFont =
-      docsRef.current.find((doc) => doc.id === activeIdRef.current)
-        ?.titleFont ?? null;
-    useOverlayStore.getState().openOverlay({
-      id: "fonts",
-      kind: "sheet",
-      side: "right",
-      title: "Fonts",
-      description:
-        "Uploaded TTF/OTF fonts work offline. Kruti Dev is added like any other font.",
-      render: () => (
-        <FontPanel
-          fonts={fontsRef.current}
-          defaultFont={defaultFontRef.current}
-          onDefaultFontChange={handleDefaultFontChange}
-          titleFont={titleFont}
-          onTitleFontChange={(family) => void handleTitleFontChange(family)}
-          onChanged={() => void refreshFonts()}
-        />
-      ),
-    });
-  }, [
-    defaultFont,
-    docs,
-    handleDefaultFontChange,
-    handleTitleFontChange,
-    refreshFonts,
-  ]);
+  }, [handleBackup, handleKeepColorsChange, handleRestoreFile]);
 
   const openPalette = useCallback(() => {
     const activeFamily =

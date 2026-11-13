@@ -34,9 +34,13 @@ const kb = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
 console.log("chunk".padEnd(44) + "raw".padStart(10) + "gzip".padStart(10));
 for (const row of rows) {
   const label = row.core ? row.name : `${row.name} (lazy)`;
-  console.log(label.padEnd(44) + kb(row.raw).padStart(10) + kb(row.gzipped).padStart(10));
+  console.log(
+    label.padEnd(44) + kb(row.raw).padStart(10) + kb(row.gzipped).padStart(10),
+  );
 }
-console.log(`${"CORE JS (gzipped)".padEnd(44)}${"".padStart(10)}${kb(core).padStart(10)}`);
+console.log(
+  `${"CORE JS (gzipped)".padEnd(44)}${"".padStart(10)}${kb(core).padStart(10)}`,
+);
 
 if (core > FAIL_BYTES) {
   console.error(`FAIL: core ${kb(core)} exceeds the 450 KB budget.`);

@@ -75,10 +75,12 @@ function getCloseWatcher(): (new () => CloseWatcherLike) | null {
 export function OverlayHost() {
   const top = useTopOverlay();
   const isDesktop = useDesktopDialogs();
-  const stackSize = useOverlayStore((state) => state.stack.length);
+  const stackEmpty = useOverlayStore((state) => state.stack.length === 0);
 
+  // Keyed on empty/non-empty only: one back-button session spans the whole
+  // stack, so pushing or popping an overlay never churns history entries.
   useEffect(() => {
-    if (stackSize === 0) return;
+    if (stackEmpty) return;
     const state = useOverlayStore.getState();
 
     // Remember where focus was so it can be restored when the stack empties.
@@ -89,8 +91,7 @@ export function OverlayHost() {
 
     const restoreFocus = () => {
       if (
-        previouslyFocused !== null &&
-        previouslyFocused.isConnected &&
+        previouslyFocused?.isConnected === true &&
         (document.activeElement === null ||
           document.activeElement === document.body)
       ) {
@@ -139,7 +140,7 @@ export function OverlayHost() {
       }
       restoreFocus();
     };
-  }, [stackSize === 0]);
+  }, [stackEmpty]);
 
   if (top === null) return null;
 

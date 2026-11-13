@@ -71,8 +71,8 @@ test("phone reaches documents through a bottom sheet", async ({ page }) => {
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Documents");
   const box = await dialog.boundingBox();
-  expect(box).not.toBeNull();
+  if (box === null) throw new Error("dialog has no bounding box");
   // Bottom sheet: spans the width, sits in the lower half.
-  expect(box!.width).toBeGreaterThanOrEqual(380);
-  expect(box!.y).toBeGreaterThan(300);
+  expect(box.width).toBeGreaterThanOrEqual(380);
+  expect(box.y).toBeGreaterThan(300);
 });

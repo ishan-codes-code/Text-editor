@@ -22,17 +22,17 @@ a checklist only. Deliberate deviations, with reasons:
 Defined in `src/index.css` (`:root` / `.dark`), exposed via `@theme inline`
 as `bg-*/text-*/border-*` utilities.
 
-| Token | Light | Dark | Use |
-| --- | --- | --- | --- |
-| `--background` | oklch(1 0 0) | oklch(0.145 0 0) | App shell, canvas surround |
-| `--foreground` | oklch(0.145 0 0) | oklch(0.985 0 0) | Body text |
-| `--card` / `--card-foreground` | white / near-black | oklch(0.205 0 0) / white | Page canvas, toasts |
-| `--popover` / `--popover-foreground` | white / near-black | oklch(0.205 0 0) / white | Menus, command palette |
-| `--primary` / `--primary-foreground` | oklch(0.205 0 0) / white | oklch(0.922 0 0) / near-black | Save, CTAs, update banner |
-| `--secondary` / `--muted` / `--accent` | oklch(0.97 0 0) family | oklch(0.269 0 0) family | Toolbars, wells, hover |
-| `--destructive` | oklch(0.577 0.245 27.325) | oklch(0.704 0.191 22.216) | Delete |
-| `--border` / `--input` / `--ring` | oklch(0.922 0 0)… | white 10–15% | Borders, inputs, focus |
-| `--chart-*`, `--sidebar-*` | shadcn defaults | shadcn defaults | Reserved for Phase B |
+| Token                                  | Light                     | Dark                          | Use                        |
+| -------------------------------------- | ------------------------- | ----------------------------- | -------------------------- |
+| `--background`                         | oklch(1 0 0)              | oklch(0.145 0 0)              | App shell, canvas surround |
+| `--foreground`                         | oklch(0.145 0 0)          | oklch(0.985 0 0)              | Body text                  |
+| `--card` / `--card-foreground`         | white / near-black        | oklch(0.205 0 0) / white      | Page canvas, toasts        |
+| `--popover` / `--popover-foreground`   | white / near-black        | oklch(0.205 0 0) / white      | Menus, command palette     |
+| `--primary` / `--primary-foreground`   | oklch(0.205 0 0) / white  | oklch(0.922 0 0) / near-black | Save, CTAs, update banner  |
+| `--secondary` / `--muted` / `--accent` | oklch(0.97 0 0) family    | oklch(0.269 0 0) family       | Toolbars, wells, hover     |
+| `--destructive`                        | oklch(0.577 0.245 27.325) | oklch(0.704 0.191 22.216)     | Delete                     |
+| `--border` / `--input` / `--ring`      | oklch(0.922 0 0)…         | white 10–15%                  | Borders, inputs, focus     |
+| `--chart-*`, `--sidebar-*`             | shadcn defaults           | shadcn defaults               | Reserved for Phase B       |
 
 Contrast target: 4.5:1 body text (skill checklist §1). Destructive-on-white
 pairs are checked in both themes before use on text.
@@ -75,12 +75,12 @@ Breakpoints respond to **viewport size and input capability**, never device
 detection. Tablet portrait 800×1280 and landscape 1280×800 are the primary
 targets; 600×960 split-screen, 1440×900 desktop and 390×844 phone must work.
 
-| Token | Width | Shell behavior |
-| --- | --- | --- |
-| phone | < 640px | Bottom sheets (vaul Drawer), single column, toolbar scrolls |
-| tablet portrait | 640–1023px | Bottom sheets, canvas max A4, side panel is slide-over |
-| tablet landscape / desktop | ≥ 1024px + landscape | Side panel docks; dialogs (Radix) centered |
-| wide | ≥ 1440px | Canvas stays A4 centered, no line-length growth |
+| Token                      | Width                | Shell behavior                                              |
+| -------------------------- | -------------------- | ----------------------------------------------------------- |
+| phone                      | < 640px              | Bottom sheets (vaul Drawer), single column, toolbar scrolls |
+| tablet portrait            | 640–1023px           | Bottom sheets, canvas max A4, side panel is slide-over      |
+| tablet landscape / desktop | ≥ 1024px + landscape | Side panel docks; dialogs (Radix) centered                  |
+| wide                       | ≥ 1440px             | Canvas stays A4 centered, no line-length growth             |
 
 Media features used: `min-width`, `orientation: landscape`,
 `(hover: hover)` + `(pointer: fine)` to gate hover-only affordances
