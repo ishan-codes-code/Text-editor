@@ -10,8 +10,22 @@ test("typing persists across reload", async ({ page }) => {
   await page.goto("/");
   const editor = page.locator('[aria-label="Editor"] .tiptap');
   await expect(editor).toBeVisible();
+  // The editor mounts non-editable and only enables editing once boot
+  // finishes: keystrokes sent earlier are silently dropped, so the save
+  // wait below would pass vacuously on the initial label and the reload
+  // would find nothing. Same guard as editor-shortcuts.spec.ts.
+  await expect(editor).toHaveAttribute("contenteditable", "true", {
+    timeout: 10_000,
+  });
   await editor.click();
   await page.keyboard.type("durable words here");
+  // Wait for the schedule to flip to dirty first, otherwise the Saved wait
+  // below passes vacuously and the reload can win the race against the
+  // write under parallel load. Same pattern as the test below.
+  await expect(page.getByTestId("save-status")).toContainText(
+    /Unsaved|Saving/,
+    { timeout: 5000 },
+  );
   await expect(page.getByTestId("save-status")).toContainText(/Saved/, {
     timeout: 5000,
   });
