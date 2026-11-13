@@ -89,29 +89,20 @@ test("doc list creates, renames, duplicates, searches and deletes", async ({
   await sheet.getByPlaceholder("Search documents…").fill("nothing matches");
   await expect(sheet).toContainText("No documents match.");
 
-  // Delete everything matching, then close. Synchronize on the count
-  // after each delete: the list refreshes asynchronously.
+  // Delete the two matches. Every step polls: raw counts do not retry
+  // and can snapshot a transient render (the list refreshes
+  // asynchronously after each mutation).
   await sheet.getByPlaceholder("Search documents…").fill("");
   page.on("dialog", (dialog) => void dialog.accept());
-  // Wait for the cleared search to repopulate before counting.
-  await expect(
-    sheet.getByRole("button", { name: /Open Shopping list/ }),
-  ).toHaveCount(2);
-  let remaining = await sheet
-    .getByRole("button", { name: /Delete Shopping list/ })
-    .count();
-  expect(remaining).toBeGreaterThan(0);
-  while (remaining > 0) {
-    await sheet
-      .getByRole("button", { name: /Delete Shopping list/ })
-      .first()
-      .click();
-    remaining -= 1;
-    await expect(
-      sheet.getByRole("button", { name: /Delete Shopping list/ }),
-    ).toHaveCount(remaining);
-  }
-  await expect(
-    sheet.getByRole("button", { name: /Open Shopping list/ }),
-  ).toHaveCount(0);
+  const openShopping = sheet.getByRole("button", {
+    name: /Open Shopping list/,
+  });
+  const deleteShopping = sheet.getByRole("button", {
+    name: /Delete Shopping list/,
+  });
+  await expect(openShopping).toHaveCount(2);
+  await deleteShopping.first().click();
+  await expect(openShopping).toHaveCount(1);
+  await deleteShopping.first().click();
+  await expect(openShopping).toHaveCount(0);
 });
