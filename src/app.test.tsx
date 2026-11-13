@@ -1,4 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./app";
 
@@ -94,5 +95,47 @@ describe("App", () => {
       },
       { timeout: 5000 },
     );
+  });
+
+  it("collapses and restores the docked documents panel, persisting the choice", async () => {
+    // Pretend to be a wide landscape screen so the panel docks instead of
+    // opening the slide-over sheet.
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes("1024"),
+      media: query,
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+    try {
+      const user = userEvent.setup();
+      render(<App />);
+      const panel = await screen.findByRole("complementary", {
+        name: "Documents panel",
+      });
+      expect(panel.className).toMatch("w-72");
+
+      await user.click(screen.getByRole("button", { name: "Documents" }));
+      await vi.waitFor(() => {
+        expect(panel.className).toMatch("w-0");
+      });
+
+      const { getSetting } = await import("./storage");
+      const { SETTINGS_KEYS } = await import("./storage/types");
+      await vi.waitFor(async () => {
+        expect(await getSetting(SETTINGS_KEYS.sidebarOpen, true)).toBe(false);
+      });
+
+      await user.click(screen.getByRole("button", { name: "Documents" }));
+      await vi.waitFor(() => {
+        expect(panel.className).toMatch("w-72");
+      });
+    } finally {
+      window.matchMedia = original;
+    }
   });
 });

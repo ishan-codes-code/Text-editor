@@ -3,7 +3,9 @@ import {
   Download,
   FileText,
   Moon,
+  PanelLeft,
   RefreshCw,
+  Save,
   Settings,
   Sun,
 } from "lucide-react";
@@ -23,10 +25,11 @@ import { DocsPanel } from "./components/DocsSheet";
 import { type ExportFormat, ExportPanel } from "./components/ExportSheet";
 import { FindBar } from "./components/FindBar";
 import { FontPanel } from "./components/FontManager";
+import { HistoryButtons } from "./components/HistoryButtons";
 import { LinkForm } from "./components/LinkDialog";
 import { LAST_CUSTOM_FONT_KEY } from "./components/paletteGlyphs";
 import { SettingsPanel } from "./components/SettingsSheet";
-import { StatusBar } from "./components/StatusBar";
+import { StatusBar, saveStateLabel } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { Button } from "./components/ui/button";
 import { Toaster } from "./components/ui/sonner";
@@ -60,6 +63,7 @@ import {
   prepareImage,
   recordBackupTime,
   registerStoredFonts,
+  renameDoc,
   restoreBackup,
   SaveQueue,
   type SaveState,
@@ -116,6 +120,36 @@ export function App() {
   }>({ open: false, withReplace: false });
   const [lastBackup, setLastBackup] = useState<number | null>(null);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
+  // Docked documents panel (wide screens only). Persisted in settings; narrow
+  // screens always use the slide-over sheet instead.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [renamingTitle, setRenamingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+
+  // Mirrors the `landscape:lg` dock breakpoint: panel docks at 1024px+ in
+  // landscape, exactly where the CSS shows the aside.
+  const [docked, setDocked] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(min-width: 1024px) and (orientation: landscape)")
+        .matches,
+  );
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
+      return;
+    }
+    const list = window.matchMedia(
+      "(min-width: 1024px) and (orientation: landscape)",
+    );
+    const onChange = (event: MediaQueryListEvent) => setDocked(event.matches);
+    setDocked(list.matches);
+    list.addEventListener("change", onChange);
+    return () => list.removeEventListener("change", onChange);
+  }, []);
 
   const pwa = useMemo(() => initPwa(), []);
   const autosaveRef = useRef<SaveQueue | null>(null);
@@ -424,6 +458,7 @@ export function App() {
         storedBackup,
         storedFonts,
         storedDefaultFont,
+        storedSidebar,
       ] = await Promise.all([
         getSetting<string | null>(SETTINGS_KEYS.lastOpenedDoc, null),
         getSetting<string>(SETTINGS_KEYS.zoom, "fit"),
@@ -431,6 +466,7 @@ export function App() {
         getSetting<number | null>(SETTINGS_KEYS.lastBackup, null),
         listFonts(),
         getSetting<string>(SETTINGS_KEYS.defaultFont, ""),
+        getSetting<boolean>(SETTINGS_KEYS.sidebarOpen, true),
       ]);
       if (cancelled) return;
       setZoom(storedZoom);
@@ -438,6 +474,7 @@ export function App() {
       setLastBackup(storedBackup);
       setFonts(storedFonts);
       setDefaultFont(storedDefaultFont);
+      setSidebarOpen(storedSidebar);
       let items = await listDocs();
       if (items.length === 0) {
         const doc = await createDoc("Untitled");
@@ -712,6 +749,26 @@ export function App() {
     });
   }, [handleDelete, handleDuplicate, handleNew, openDoc, refreshDocs]);
 
+  const toggleSidebar = useCallback(() => {
+    if (docked) {
+      setSidebarOpen((open) => {
+        void setSetting(SETTINGS_KEYS.sidebarOpen, !open);
+        return !open;
+      });
+      return;
+    }
+    openDocs();
+  }, [docked, openDocs]);
+
+  const commitTitleRename = useCallback(async () => {
+    const id = activeIdRef.current;
+    const title = titleDraft.trim();
+    setRenamingTitle(false);
+    if (id === null || title === "") return;
+    await renameDoc(id, title);
+    await refreshDocs();
+  }, [refreshDocs, titleDraft]);
+
   const openSettings = useCallback(() => {
     useOverlayStore.getState().openOverlay({
       id: "settings",
@@ -911,6 +968,16 @@ export function App() {
     return () => observer.disconnect();
   }, [zoom]);
   const zoomFactor = zoom === "fit" ? fitScale : Number(zoom);
+  const activeTitle =
+    docs.find((doc) => doc.id === activeId)?.title ?? "Offline text editor";
+  const saveLabel =
+    saveState === "saving"
+      ? "Saving…"
+      : saveState === "dirty"
+        ? "Save*"
+        : saveState === "error"
+          ? "Retry"
+          : "Saved";
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground print:h-auto print:overflow-visible">
@@ -975,56 +1042,104 @@ export function App() {
       )}
 
       <header className="z-10 shrink-0 border-b bg-background/95 print:hidden">
-        <div className="flex items-center gap-2 px-4 py-2">
+        <div className="flex min-h-16 items-center gap-1 px-2 py-1.5 sm:gap-2 sm:px-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-11 shrink-0"
+            aria-label="Documents"
+            title={docked ? "Toggle documents panel" : "Open documents (sheet)"}
+            aria-expanded={docked ? sidebarOpen : undefined}
+            onClick={() => toggleSidebar()}
+          >
+            <PanelLeft />
+          </Button>
+          <h1 className="min-w-0 flex-1 truncate text-base font-semibold">
+            {renamingTitle ? (
+              <input
+                aria-label="Document title"
+                value={titleDraft}
+                ref={(element) => {
+                  element?.focus();
+                }}
+                onFocus={(event) => event.currentTarget.select()}
+                onChange={(event) => setTitleDraft(event.currentTarget.value)}
+                onBlur={() => void commitTitleRename()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void commitTitleRename();
+                  if (event.key === "Escape") setRenamingTitle(false);
+                }}
+                className="h-9 w-full max-w-64 rounded-md border border-input bg-background px-2 text-base font-semibold"
+              />
+            ) : (
+              <button
+                type="button"
+                title="Rename document"
+                aria-label={`Rename document ${activeTitle}`}
+                onClick={() => {
+                  setTitleDraft(activeTitle);
+                  setRenamingTitle(true);
+                }}
+                className="block w-full truncate text-left"
+              >
+                {activeTitle}
+              </button>
+            )}
+          </h1>
+          <span className="hidden shrink-0 text-xs text-muted-foreground lg:block">
+            {saveStateLabel(saveState, null, readOnly)}
+          </span>
+          <HistoryButtons editor={editor} />
           <Button
             variant="outline"
             size="sm"
-            className="h-11 landscape:lg:hidden"
-            aria-label="Documents"
-            onClick={() => openDocs()}
+            aria-label={`Save (${saveLabel})`}
+            title="Save now (Ctrl+S)"
+            onClick={() => void flushNow()}
+            className="h-11 shrink-0"
           >
-            <FileText className="size-4" /> Docs
+            <Save className="size-4" />{" "}
+            <span className="hidden xl:inline">{saveLabel}</span>
           </Button>
           <Button
             variant="outline"
             size="sm"
-            className="h-11"
+            className="h-11 shrink-0"
             aria-label="Export or import"
+            title="Export or import"
             onClick={() => openExport()}
           >
-            <Download className="size-4" /> Export
+            <Download className="size-4" />{" "}
+            <span className="hidden xl:inline">Export</span>
           </Button>
-          <h1 className="truncate text-base font-semibold">
-            {docs.find((doc) => doc.id === activeId)?.title ??
-              "Offline text editor"}
-          </h1>
-          <div className="ml-auto flex items-center gap-1">
-            <label className="sr-only" htmlFor="zoom-select">
-              Zoom
-            </label>
-            <select
-              id="zoom-select"
-              aria-label="Zoom"
-              value={zoom}
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                setZoom(value);
-                void setSetting(SETTINGS_KEYS.zoom, value);
-              }}
-              className="h-11 rounded-md border border-input bg-background px-1 text-sm"
-            >
-              {ZOOM_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option === "fit" ? "Fit" : `${Number(option) * 100}%`}
-                </option>
-              ))}
-            </select>
+          <label className="sr-only" htmlFor="zoom-select">
+            Zoom
+          </label>
+          <select
+            id="zoom-select"
+            aria-label="Zoom"
+            value={zoom}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              setZoom(value);
+              void setSetting(SETTINGS_KEYS.zoom, value);
+            }}
+            className="hidden h-11 shrink-0 rounded-md border border-input bg-background px-1 text-sm sm:block"
+          >
+            {ZOOM_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option === "fit" ? "Fit" : `${Number(option) * 100}%`}
+              </option>
+            ))}
+          </select>
+          <div className="flex shrink-0 items-center">
             <ThemeToggle />
             <Button
               variant="ghost"
               size="icon"
               className="size-11"
               aria-label="Open settings"
+              title="Settings"
               onClick={() => openSettings()}
             >
               <Settings />
@@ -1047,16 +1162,6 @@ export function App() {
               onToggleFont={() => void toggleFont()}
               onManageFonts={() => openFontManager()}
               onInsertImage={() => imageFileRef.current?.click()}
-              onSave={() => void flushNow()}
-              saveLabel={
-                saveState === "saving"
-                  ? "Saving…"
-                  : saveState === "dirty"
-                    ? "Save*"
-                    : saveState === "error"
-                      ? "Retry"
-                      : "Saved"
-              }
               families={fonts.map((font) => font.family)}
             />
             <input
@@ -1086,29 +1191,38 @@ export function App() {
       <div className="flex min-h-0 flex-1">
         <aside
           aria-label="Documents panel"
-          className="hidden min-h-0 w-72 shrink-0 overflow-y-auto overscroll-contain border-r bg-background px-3 py-4 landscape:lg:block print:hidden"
+          inert={docked && !sidebarOpen ? true : undefined}
+          className={
+            docked
+              ? `min-h-0 shrink-0 overflow-hidden bg-background transition-[width] duration-150 motion-reduce:transition-none print:hidden ${
+                  sidebarOpen ? "w-72 border-r" : "w-0"
+                }`
+              : "hidden print:hidden"
+          }
         >
-          <DocsPanel
-            docs={docs}
-            activeId={activeId}
-            onOpen={(id) => {
-              void openDoc(id);
-            }}
-            onNew={() => void handleNew()}
-            onDuplicate={(id) => void handleDuplicate(id)}
-            onDelete={(id) => void handleDelete(id)}
-            onChanged={() => void refreshDocs()}
-          />
+          <div className="h-full w-72 overflow-y-auto overscroll-contain px-3 py-4">
+            <DocsPanel
+              docs={docs}
+              activeId={activeId}
+              onOpen={(id) => {
+                void openDoc(id);
+              }}
+              onNew={() => void handleNew()}
+              onDuplicate={(id) => void handleDuplicate(id)}
+              onDelete={(id) => void handleDelete(id)}
+              onChanged={() => void refreshDocs()}
+            />
+          </div>
         </aside>
 
         <main
           style={{ scrollbarGutter: "stable" }}
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/60 px-4 py-6 print:overflow-visible print:bg-white print:p-0"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-workspace px-4 py-6 print:overflow-visible print:bg-white print:p-0"
         >
           <div ref={canvasWrapRef} className="mx-auto w-full max-w-[210mm]">
             <section
               aria-label="Editor"
-              className="rounded-sm bg-card px-6 py-8 text-card-foreground shadow-sm print:rounded-none print:shadow-none sm:px-10"
+              className="rounded-sm border bg-card px-6 py-8 text-card-foreground shadow-md dark:shadow-black/50 sm:px-10 print:rounded-none print:border-0 print:shadow-none"
               style={{ zoom: zoomFactor } as React.CSSProperties}
             >
               <EditorContent editor={editor} />

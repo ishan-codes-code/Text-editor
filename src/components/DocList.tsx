@@ -59,13 +59,13 @@ export function DocList({
           <FilePlus className="size-4" /> New
         </Button>
       </div>
-      <ul aria-label="Documents" className="flex flex-col gap-1">
+      <ul aria-label="Documents" className="flex flex-col gap-1.5">
         {docs.map((doc) => {
           const active = doc.id === activeId;
           return (
             <li
               key={doc.id}
-              className={`flex items-center gap-1 rounded-md px-2 py-1.5 ${active ? "bg-accent" : "hover:bg-accent/50"}`}
+              className={`flex items-center gap-1 rounded-lg px-1.5 py-1 ${active ? "bg-accent" : "hover:bg-accent/50"}`}
             >
               {renamingId === doc.id ? (
                 <input
@@ -90,10 +90,10 @@ export function DocList({
                   onClick={() => onOpen(doc.id)}
                   aria-label={`Open ${doc.title}`}
                   aria-current={active ? "true" : undefined}
-                  className="flex min-h-11 min-w-0 flex-1 items-center text-left"
+                  className="flex min-h-11 min-w-0 flex-1 flex-col items-start justify-center gap-0.5 px-1.5 py-1 text-left"
                 >
                   <span
-                    className="block truncate text-sm font-medium"
+                    className="block w-full truncate text-sm font-medium"
                     style={
                       doc.titleFont != null
                         ? { fontFamily: quoteFontFamily(doc.titleFont) }
@@ -111,6 +111,7 @@ export function DocList({
               <Button
                 variant="ghost"
                 size="icon"
+                className="size-11 shrink-0"
                 aria-label={`Rename ${doc.title}`}
                 title="Rename"
                 onClick={() => {
@@ -123,6 +124,7 @@ export function DocList({
               <Button
                 variant="ghost"
                 size="icon"
+                className="size-11 shrink-0"
                 aria-label={`Duplicate ${doc.title}`}
                 title="Duplicate"
                 onClick={() => onDuplicate(doc.id)}
@@ -132,6 +134,7 @@ export function DocList({
               <Button
                 variant="ghost"
                 size="icon"
+                className="size-11 shrink-0"
                 aria-label={`Delete ${doc.title}`}
                 title="Delete"
                 onClick={() => onDelete(doc.id)}
