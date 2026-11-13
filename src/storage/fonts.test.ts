@@ -1,4 +1,4 @@
-import { Blob as NodeBlob } from "node:buffer";
+import { Blob as NodeBlob, Buffer as NodeBuffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -106,7 +106,15 @@ describe("font storage", () => {
     const stored = await db.fonts.get(record.id);
     expect(stored).toBeDefined();
     const { blobToBytes } = await import("./blob");
-    expect(await blobToBytes(stored?.blob as Blob)).toEqual(fixtureBytes());
+    const roundTripped = await blobToBytes(stored?.blob as Blob);
+    const expected = fixtureBytes();
+    // `toEqual` on ~750 KB arrays costs seconds inside Vitest's differ (it
+    // blew the 5 s timeout on CI); length plus memcmp proves identical bytes
+    // in microseconds.
+    expect(roundTripped.length).toBe(expected.length);
+    expect(
+      NodeBuffer.from(roundTripped).equals(NodeBuffer.from(expected)),
+    ).toBe(true);
   });
 });
 
