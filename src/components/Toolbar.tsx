@@ -149,6 +149,7 @@ function ToolButton({
   title,
   active,
   disabled,
+  keepFocus,
   onPress,
   children,
 }: {
@@ -156,6 +157,13 @@ function ToolButton({
   title: string;
   active?: boolean;
   disabled?: boolean;
+  /**
+   * Overlay and file triggers (link dialog, find bar, palette, image
+   * picker) must receive DOM focus on press: the overlay manager returns
+   * focus to the pre-overlay element on close, and focus never lands on a
+   * button whose mousedown default was suppressed.
+   */
+  keepFocus?: boolean;
   onPress: () => void;
   children: ReactNode;
 }) {
@@ -172,7 +180,7 @@ function ToolButton({
       // command should act on. Suppress it so `focus()` in the chain restores
       // the saved selection instead of collapsing to a stale caret.
       onMouseDown={(event: MouseEvent) => {
-        if (disabled !== true) event.preventDefault();
+        if (disabled !== true && keepFocus !== true) event.preventDefault();
       }}
       onClick={onPress}
     >
@@ -511,6 +519,7 @@ export function Toolbar({
           label="Link (Ctrl+K)"
           title="Link (Ctrl+K)"
           active={ui.link}
+          keepFocus
           onPress={onOpenLink}
         >
           <LinkIcon />
@@ -518,6 +527,7 @@ export function Toolbar({
         <ToolButton
           label="Insert image"
           title="Insert image (resized to 1600 px, stored offline)"
+          keepFocus
           onPress={onInsertImage}
         >
           <ImagePlus />
@@ -596,6 +606,7 @@ export function Toolbar({
         <ToolButton
           label="Find and replace (Ctrl+F)"
           title="Find and replace (Ctrl+F)"
+          keepFocus
           onPress={onOpenFind}
         >
           <Search />
@@ -603,6 +614,7 @@ export function Toolbar({
         <ToolButton
           label="Special characters"
           title="Special characters (Ctrl+Shift+P)"
+          keepFocus
           onPress={onOpenPalette}
         >
           <Languages />

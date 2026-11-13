@@ -1124,7 +1124,10 @@ export function App() {
               setZoom(value);
               void setSetting(SETTINGS_KEYS.zoom, value);
             }}
-            className="hidden h-11 shrink-0 rounded-md border border-input bg-background px-1 text-sm sm:block"
+            // Always reachable: zoom is a required document control (TRD
+            // F13) and e2e drives it at phone widths. The title truncates
+            // first on crowded rows.
+            className="h-11 w-20 shrink-0 rounded-md border border-input bg-background px-1 text-sm"
           >
             {ZOOM_OPTIONS.map((option) => (
               <option key={option} value={option}>
