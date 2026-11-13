@@ -397,6 +397,12 @@ export function App() {
 
   useEffect(() => {
     editorRef.current = editor;
+    if (typeof window !== "undefined" && editor !== null) {
+      (window as { __sel?: () => string }).__sel = () => {
+        const { from, to } = editor.state.selection;
+        return `${from}-${to}`;
+      };
+    }
   }, [editor]);
 
   // Boot: ensure at least one document, then open the last-opened one.
