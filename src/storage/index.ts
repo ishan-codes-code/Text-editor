@@ -18,7 +18,12 @@ export {
   searchDocs,
   setDocTitleFont,
 } from "./documents";
-export { acquireDocLock, docLockName, locksSupported } from "./locks";
+export {
+  acquireDocLock,
+  type DocLock,
+  docLockName,
+  locksSupported,
+} from "./locks";
 export {
   parseBackup,
   RestoreError,

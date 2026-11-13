@@ -60,8 +60,7 @@ describe("editor extensions", () => {
   it("indents and outdents within limits", () => {
     const editor = track();
     const indentOf = () =>
-      (editor.getAttributes("paragraph") as { indent?: number | null })
-        .indent;
+      (editor.getAttributes("paragraph") as { indent?: number | null }).indent;
     expect(editor.commands.indent()).toBe(true);
     expect(indentOf()).toBe(1);
     expect(editor.commands.indent()).toBe(true);
