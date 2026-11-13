@@ -1,48 +1,71 @@
 # Offline PWA Text Editor
 
-Offline-first rich-text editor PWA for one user on Android Chrome with a physical keyboard. Defining feature: non-Unicode Hindi fonts (Kruti Dev) and user-uploaded TTF/OTF fonts. The spec is `docs/TRD.md` (v1.1). Read the relevant section before starting any task; if code and TRD disagree, stop and ask.
+Offline-first rich-text editor PWA, tablet-first (Android tablet portrait 800x1280 and landscape 1280x800; also 600x960 split-screen, desktop Chrome/Edge and phone). Defining feature: non-Unicode Hindi fonts (Kruti Dev) and user-uploaded TTF/OTF fonts. The spec is `docs/TRD.md` (v2). Read the relevant section before starting any task; if code and TRD disagree, stop and ask.
 
 ## Stack
 
-Preact + Vite + TypeScript (strict), Tailwind, official Tiptap 3 extensions (individual packages or StarterKit only where it is smaller and verified against installed v3 exports), Dexie behind `src/storage/`, `fflate` for backup zip, `valibot` for schema validation, lazy `docx` and `mammoth`. UI uses standard shadcn/ui patterns with `react` aliased to `preact/compat`, Radix primitives where they pass under compat, native `<dialog>`/popover fallbacks only for primitives that fail verification, lucide icons (individual imports).
+React 19 + Vite + TypeScript (strict), Tailwind v4, official Tiptap 3 extensions (individual packages; `@tiptap/react` adapter with `useEditorState` selectors), Dexie behind `src/storage/`, Zustand for session state machine and overlay stack, `fflate` for backup zip, `valibot` for schema validation, lazy `docx` and `mammoth`. UI is real shadcn/ui (Radix nova, via the shadcn CLI) plus vaul Drawer, cmdk Command, sonner Toaster, next-themes; lucide-react icons (individual imports). Tokens in `docs/DESIGN.md`, wired into Tailwind/shadcn CSS variables in `src/index.css`.
 
 ## Commands
 
 - `npm run dev` start dev server
 - `npm run typecheck` tsc --noEmit
-- `npm run lint` Biome check
-- `npm test` Vitest (use `fake-indexeddb`)
-- `npm run e2e` Playwright
-- `npm run size` size-limit (core JS budget 300 KB gzipped)
+- `npm run lint` Biome check (vendored `.agents/**` skills are ignored; upstream `input-group` a11y notes are waived in `biome.json`)
+- `npm test` Vitest (use `fake-indexeddb`; jsdom stubs for matchMedia/ResizeObserver/scrollIntoView live in `tests/setup.js`)
+- `npm run e2e` Playwright (Pixel 7 project; rebuilds + serves prod unless `E2E_REUSE_BUILD=1`, which reuses an existing `dist` after an explicit `npm run build`)
+- `npm run size` size-limit (fails over 450 KB gzipped core JS — the startup entry; lazy chunks excluded but precached)
+- `npm run size:budget` per-chunk table; core entry warns over 350 KB, fails over 450 KB
 - `npm run build` production build + service worker
 
-## Definition of done
+## Principles
 
-A task is done only when typecheck, lint, tests, `npm run size` and any relevant e2e pass. Tasks touching input, fonts, layout or the service worker also need a manual Android check; list what to verify on the device in your final message.
+- Product development takes priority over tooling and maintenance.
+- Run the cheapest check that covers the risk; never repeat an expensive check without a technical reason.
+- Do not investigate or fix unrelated warnings, and do not refactor unrelated code.
+- Preserve the architecture, technical decisions, and requirements below.
+- Do not remove quality safeguards just to make CI faster.
+
+## Verification policy
+
+During implementation: run only relevant targeted tests; run typecheck only when TypeScript contracts or app integration change; run lint on changed files or relevant scopes; do not run production builds or E2E after minor changes.
+
+Before committing: run typecheck, relevant unit tests, and lint; review the diff for unintended changes.
+
+Before opening a feature PR: run the full unit-test suite, the production build, bundle-size checks, and relevant E2E tests.
+
+Before merging: require successful CI; run the full E2E suite when the change warrants it; run visual regression only when UI, layout, styling, or responsive behavior changes, and update plus inspect screenshot baselines only when the visual change is intended.
+
+Manual Android check is required only for changes affecting typing, fonts, keyboard behavior, touch interactions, layout, storage, or offline functionality. The final summary must state exactly what to verify on the device.
 
 ## Hard rules
 
 - No backend, no telemetry, no network calls at runtime. Everything works offline, including export, import and tables: every lazy chunk must be precached.
-- Documents are stored as editor JSON in IndexedDB behind `src/storage/`. UI code never touches Dexie directly.
-- Fonts: register with `new FontFace(family, await blob.arrayBuffer())`, then `await face.load()`. Never pass a Blob. Never rely on `font-display`.
+- Documents are stored as editor JSON in IndexedDB behind `src/storage/`. UI code never touches Dexie directly. The document list reads the content-free `docMeta` projection, never editor JSON; every docs write syncs meta in the same transaction.
+- Fonts: register with `new FontFace(family, await blob.arrayBuffer())`, then `await face.load()`. Never pass a Blob. Never rely on `font-display`. Re-measure layout after `document.fonts.ready` (see `remeasureAfterFontsLoad`).
 - The editable element always has `spellcheck="false"`, `autocorrect="off"`, `autocapitalize="none"`.
 - Never commit, bundle or fetch the Kruti Dev font. Tests use a free TTF under `tests/fixtures/`. `*.ttf`/`*.otf` outside fixtures are gitignored.
-- Writes are single Dexie transactions. Autosave debounce 400 ms plus forced save on blur and `visibilitychange`.
-- Never reload the page automatically on a service worker update.
+- Writes are single Dexie transactions. Saves go through one `SaveQueue` per open document (generation tokens, lazy serialization at write time, 400 ms debounce, forced save on blur/`visibilitychange`/`pagehide`).
+- Never reload the page automatically on a service worker update. "Update now" flushes saves before reloading.
+- Never `setContent` while composing (IME guard in `applyContent.ts`); a corrupt stored doc falls back to the newest loadable snapshot, never read-only.
+- Overlays open only through `src/overlays/store.ts`. One overlay renders at a time (single scroll lock, Esc/back close the top, focus returns). Dialogs ≥768px, bottom sheets below; every overlay max-height 100dvh with its own inner scroll.
+- Restore: validate, deliver the pre-restore backup to the user, then write in ONE transaction. Duplicate copies images under new ids and rewrites `imageRef` ids.
 - Add a dependency only if it is needed; state its gzipped size and the `npm run size` delta. Ask only for genuinely user decisions; when the task authorizes a library set, proceed and report sizes in the final summary instead of pausing.
-- No `any`, no silenced TypeScript errors, no commented-out code.
-- Tiptap 3 differs from v2 in package layout and extension names: check the installed version's exports and docs (use the Context7 MCP if available) instead of guessing.
+- No `any`, no silenced TypeScript errors, no commented-out code, no non-null assertions (Biome enforced).
+- Tiptap 3 differs from v2 in package layout and extension names: check the installed version's exports and docs (use the Context7 MCP) instead of guessing.
+- Touch targets ≥44px, nothing hover-only; respond to size/input capability (container queries, `(hover)`, `(pointer)`), never device detection.
 
 ## Workflow
 
-1. For non-trivial work, plan once at the start, then implement the whole chunk end to end; commit logically but do not pause between commits.
-2. One branch per phase, with up to two related phases per branch (for example `phase-2-3-editor-storage`); small commits, conventional messages.
-3. Libraries first: use official Tiptap extensions, Radix/Base UI primitives where they work under compat, Dexie, `fflate`, and `valibot`. Hand-roll only when no suitable library fits budget/compat, and say which with size numbers.
-4. Write the test with the feature, not after. Relevant only: cover behavior that can break users (save/restore, offline, typing, locks, schema validation, paste policy, compat-critical UI); do not add trivial rendering tests.
-5. While working, run the relevant tests for each change; run the full suite once before the final summary.
-6. Ask only for genuinely user decisions.
-7. Finish with a short summary: what changed, what was verified, size delta, what the user must check on the Android device, open questions.
+1. Understand the requested task, then inspect the relevant existing implementation before changing code.
+2. For non-trivial work, plan once at the start, then implement the whole scope end to end.
+3. Libraries first: use official Tiptap extensions, Radix/shadcn primitives, Dexie, `fflate`, and `valibot`. Hand-roll only when no suitable library fits budget/compat, and say which with size numbers.
+4. Write the test with the feature, not after. Relevant only: cover behavior that can break users (save queue ordering/generations, session transitions, restore safety, duplicate-with-images, corrupt recovery, overlay stack + back button, offline, typing, locks, schema validation, paste policy); do not add trivial rendering tests.
+5. Test based on actual risk and affected functionality. Report which checks passed, failed, or were skipped; never claim a test passed if it was not run.
+6. One branch per phase (for example `phase-a-foundation`); small logically-scoped commits with conventional messages. Ask only for genuinely user decisions.
+7. Finish with a short summary: what changed, what was verified (including size delta), what the user must check on the Android device, open questions.
 
-## Project skills
+## Project skills and MCP
 
-`.claude/skills/` holds `font-system`, `offline-pwa` and `storage-backup`. They load when the task matches; use them for anything touching fonts, the service worker/precache, or storage and backup.
+- `.claude/skills/` holds `font-system`, `offline-pwa` and `storage-backup`: use for fonts, service worker/precache, storage and backup. Do not load unrelated design skills for non-design tasks.
+- `.agents/skills/` (project scope): `shadcn` + `migrate-radix-to-base` (shadcn/ui work), `ui-ux-pro-max` + `design-system`/`ui-styling`/`design`/`brand`/`slides`/`banner-design` (design checklist only — never a code generator; its `search.py` is stdlib-local, but do NOT run its `fetch-background`, `sync-brand`, `shadcn_add` or `setup.sh` helpers: they hit the network/run shell).
+- `.mcp.json`: `shadcn` MCP server (`npx shadcn@latest mcp`). Context7 and Playwright MCPs are provided by the environment — verify before reinstalling.

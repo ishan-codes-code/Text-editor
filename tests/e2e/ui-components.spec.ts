@@ -16,12 +16,12 @@ test("link dialog traps focus, closes with Escape and returns focus", async ({
 }) => {
   const trigger = page.getByRole("button", { name: "Link (Ctrl+K)" });
   await trigger.click();
-  const dialog = page.locator("dialog[open]");
+  const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Add link");
 
   const focusInside = await page.evaluate(() => {
-    const element = document.querySelector("dialog[open]");
+    const element = document.querySelector('[role="dialog"]');
     return element?.contains(document.activeElement) ?? false;
   });
   expect(focusInside).toBe(true);
@@ -35,7 +35,7 @@ test("settings sheet shows storage status and backup actions", async ({
   page,
 }) => {
   await page.getByRole("button", { name: "Open settings" }).click();
-  const dialog = page.locator("dialog[open]");
+  const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Persistent storage");
   await expect(
@@ -51,14 +51,14 @@ test("settings sheet shows storage status and backup actions", async ({
 
 test("docs sheet creates and searches", async ({ page }) => {
   await page.getByRole("button", { name: "Documents" }).click();
-  let sheet = page.locator("dialog[open]");
+  let sheet = page.getByRole("dialog");
   await expect(sheet).toContainText("Documents");
 
   // Creating opens the new doc and closes the sheet; reopen to manage.
   await sheet.getByRole("button", { name: "New document" }).click();
   await expect(sheet).toBeHidden();
   await page.getByRole("button", { name: "Documents" }).click();
-  sheet = page.locator("dialog[open]");
+  sheet = page.getByRole("dialog");
   await expect(
     sheet.getByRole("button", { name: /Open Untitled/ }),
   ).not.toHaveCount(0);

@@ -6,7 +6,7 @@ import {
   Replace,
   Search as SearchIcon,
   X,
-} from "lucide-preact";
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { findMatches } from "../editor/search";
 import { Button } from "./ui/button";

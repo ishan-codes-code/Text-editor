@@ -1,4 +1,6 @@
-import type { SaveState } from "../storage/autosave";
+import type { Editor } from "@tiptap/core";
+import { useEditorState } from "@tiptap/react";
+import type { SaveState } from "../storage";
 
 export function saveStateLabel(
   state: SaveState,
@@ -19,19 +21,37 @@ export function saveStateLabel(
   }
 }
 
+function selectCounts(ctx: { editor: Editor | null }): {
+  words: number;
+  chars: number;
+} {
+  if (ctx.editor === null) return { words: 0, chars: 0 };
+  return {
+    words: ctx.editor.storage.characterCount.words() as number,
+    chars: ctx.editor.storage.characterCount.characters() as number,
+  };
+}
+
 export function StatusBar({
-  words,
-  chars,
+  editor,
   saveState,
   savedAt,
   readOnly,
 }: {
-  words: number;
-  chars: number;
+  editor: Editor | null;
   saveState: SaveState;
   savedAt: number | null;
   readOnly: boolean;
 }) {
+  // Counts subscribe to the editor directly, so typing re-renders only this
+  // footer — the app shell above never re-renders per keystroke.
+  const { words, chars } = useEditorState({
+    editor,
+    selector: selectCounts,
+  }) ?? {
+    words: 0,
+    chars: 0,
+  };
   return (
     <footer className="flex items-center justify-between gap-2 px-1 py-2 text-xs text-muted-foreground">
       <span data-testid="word-count">

@@ -1,6 +1,6 @@
-# TRD: Offline PWA Text Editor (v1.1)
+# TRD: Offline PWA Text Editor (v2 — Phase A foundation)
 
-Nov 13, 2026 · @Ishan · supersedes v1 (Nov 12, 2026)
+Nov 13, 2026 · @Ishan · v2 supersedes v1.1 (Nov 13, 2026): tablet-first target, React 19 stack, overlay manager, save queue, session machine, docMeta projection, warn/fail size budget, screenshot matrix. Design tokens: docs/DESIGN.md.
 
 ## Changelog v1 to v1.1
 
@@ -27,7 +27,7 @@ A lightweight, offline-first rich-text editor, built as a PWA for personal use o
 **Goals**
 
 - Works fully offline after first load; installs to the Android home screen
-- Small bundle: core JS under **300 KB gzipped** **[v1.1: was 250]**, enforced by `size-limit` in CI; editor extensions loaded only as needed; **all** chunks precached after install so nothing needs the network later
+- Small bundle: core JS under **450 KB gzipped (warn at 350 KB)** **[v2: was 300 hard]**, enforced by `size-limit` (entry chunk) + `size:budget` (per-chunk table) in CI; editor extensions and vendor libs (docx, mammoth) loaded only as needed; **all** chunks precached after install so nothing needs the network later
 - Kruti Dev and any uploaded TTF/OTF font render correctly and persist offline
 - Docs-style editing: formatting, lists, tables, images, find and replace, keyboard shortcuts
 - Export to PDF, DOCX and TXT; full backup and restore
@@ -72,31 +72,31 @@ A lightweight, offline-first rich-text editor, built as a PWA for personal use o
 
 **Non-functional**
 
-| Area           | Target                                                                                            |
-| -------------- | ------------------------------------------------------------------------------------------------- |
-| Startup        | Interactive in under 1.5 s on a mid-range Android phone, cached                                   |
-| Typing latency | Under 50 ms per keystroke on documents up to 50,000 words                                         |
-| Bundle         | Under 300 KB gzipped core JS; export/import/table chunks lazy but precached                       |
-| Offline        | Zero network requests required after install, including export, import and tables                 |
-| Durability     | Request persistent storage and report the result; save within 500 ms of last edit for normal docs |
-| Privacy        | No telemetry; no data leaves the device                                                           |
+| Area           | Target                                                                                                     |
+| -------------- | ---------------------------------------------------------------------------------------------------------- |
+| Startup        | Interactive in under 1.5 s on a mid-range Android phone, cached                                            |
+| Typing latency | Under 50 ms per keystroke on documents up to 50,000 words                                                  |
+| Bundle         | Under 450 KB gzipped core (startup) JS, warn at 350; export/import/table/overlay chunks lazy but precached |
+| Offline        | Zero network requests required after install, including export, import and tables                          |
+| Durability     | Request persistent storage and report the result; save within 500 ms of last edit for normal docs          |
+| Privacy        | No telemetry; no data leaves the device                                                                    |
 
 ## Architecture and tech stack
 
 A client-only PWA: no backend, no accounts. Everything runs in the browser and is stored on the device. The editor reads and writes IndexedDB; fonts and exports draw on the same stored data, and the service worker serves the whole app offline.
 
-| Layer                      | Choice                                                                      | Why                                                                                |
-| -------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| UI framework               | Preact + Vite + TypeScript (strict)                                         | About 4 KB runtime, fast builds, React-compatible                                  |
-| Component layer **[v1.1]** | shadcn/ui components (copied in) on `preact/compat`, Tailwind, lucide icons | Fastest way to a polished, accessible toolbar/dialog/menu set; agents know it well |
-| Editor engine              | Tiptap 3 **core** (`@tiptap/core`, ProseMirror), no React wrapper           | Framework-agnostic; thin Preact hook mounts the editor                             |
-| Styling                    | Tailwind CSS (purged)                                                       | Small CSS output, fast iteration                                                   |
-| Local database             | Dexie (IndexedDB)                                                           | Simple API for docs, fonts and images as Blobs                                     |
-| Offline                    | vite-plugin-pwa (Workbox), prompt update mode                               | Precache every chunk, install prompt, safe update flow                             |
-| Fonts                      | `FontFace` API with `ArrayBuffer` source                                    | Registers uploaded TTF/OTF at runtime, offline-safe                                |
-| Export                     | Print CSS for PDF; `docx` and `mammoth.js` lazy-loaded and precached        | PDF costs nothing in bundle size                                                   |
-| Backup **[v1.1]**          | `fflate` zip; `valibot` for schema validation                               | ~8 KB zip; tiny validator instead of zod                                           |
-| Hosting                    | Any static host (GitHub Pages, Netlify, Cloudflare Pages)                   | HTTPS required for service workers                                                 |
+| Layer                    | Choice                                                                               | Why                                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| UI framework             | React 19 + Vite + TypeScript (strict) **[v2: was Preact]**                           | Official Tiptap React adapter, Radix shadcn ecosystem                                       |
+| Component layer **[v2]** | Real shadcn/ui (Radix nova) + vaul Drawer + cmdk + sonner, Tailwind v4, lucide-react | Radix Dialog/Sheet on desktop, vaul bottom sheets on touch widths; tokens in docs/DESIGN.md |
+| Editor engine            | Tiptap 3 via `@tiptap/react` **[v2: was core-only]**                                 | `useEditor` + `useEditorState` selectors; typing re-renders only subscribed subtrees        |
+| Styling                  | Tailwind CSS (purged)                                                                | Small CSS output, fast iteration                                                            |
+| Local database           | Dexie (IndexedDB)                                                                    | Simple API for docs, fonts and images as Blobs                                              |
+| Offline                  | vite-plugin-pwa (Workbox), prompt update mode                                        | Precache every chunk, install prompt, safe update flow                                      |
+| Fonts                    | `FontFace` API with `ArrayBuffer` source                                             | Registers uploaded TTF/OTF at runtime, offline-safe                                         |
+| Export                   | Print CSS for PDF; `docx` and `mammoth.js` lazy-loaded and precached                 | PDF costs nothing in bundle size                                                            |
+| Backup **[v1.1]**        | `fflate` zip; `valibot` for schema validation                                        | ~8 KB zip; tiny validator instead of zod                                                    |
+| Hosting                  | Any static host (GitHub Pages, Netlify, Cloudflare Pages)                            | HTTPS required for service workers                                                          |
 
 The editor can be swapped later because documents are stored as editor JSON behind a small storage module.
 
@@ -124,13 +124,26 @@ All data lives in IndexedDB, accessed through Dexie. The service worker precache
 | images    | id, docId, blob, mime                                                        | Doc JSON references image by id; resized to max 1600 px, re-encoded as WebP on insert                |
 | settings  | key, value                                                                   | Theme, default font, default size, zoom, last-opened doc, last backup time                           |
 
-**Save behavior**
+**Save behavior [v2: single-writer queue + generation tokens]**
+
+- One `SaveQueue` per open document: schedules stash lazy getters (editor JSON is serialized at write time, not per keystroke), coalesce to the newest generation, and write strictly sequentially so an older save can never overwrite newer content. Failed payloads retry unless superseded.
+- Session is an explicit Zustand state machine (`src/session/store.ts`): idle → loading → ready ⇄ switching, with error recovery. Restore/duplicate/update-reload are exclusive: flush saves first, block editing while they run. Never `setContent` while composing; a corrupt doc falls back to the newest loadable snapshot (or blank) with an error notice — never read-only.
+- Restore: validate → deliver the pre-restore backup to the user → write everything in ONE Dexie transaction. Duplicate copies images under new ids and rewrites `imageRef` ids. "Update now" flushes saves before reloading. The document list reads the content-free `docMeta` projection (schema v2, synced in every docs write), so autosaves never load editor JSON.
+- `document.fonts.ready` triggers a layout re-measure after stored fonts load.
+
+**Save behavior (history)**
 
 - Debounced autosave 400 ms after the last keystroke, plus forced save on blur and `visibilitychange` **[v1.1]** For large docs (about 20,000+ words) lengthen the debounce, serialize inside `requestIdleCallback`, and keep the forced saves, so `getJSON()` cannot break the typing-latency target
 - Writes are single transactions, so a crash cannot leave a half-saved document
 - Call `navigator.storage.persist()` on first run and **check the returned value**; Chrome grants it heuristically (for example to installed PWAs), not via a prompt. Show the status in settings, and nudge the user to install the PWA and back up if it is `false` **[v1.1]**
 - **Multi-tab lock [v1.1]:** take a Web Lock per document id; a second tab opens the doc read-only with a banner
 - Show a quiet saved indicator in the toolbar
+
+**Overlay manager [v2]**
+
+- One stack (`src/overlays/`) for dialogs, sheets, menus and popovers; overlays open only through the manager. Only the top renders: single scroll lock, Esc closes the top item natively, focus returns when the stack empties.
+- Dialogs from 768px up (Radix), bottom sheets below 640px (vaul Drawer). Every overlay is max-height 100dvh with its own inner scroll.
+- Android back button closes the top item: CloseWatcher where available, single history-entry fallback otherwise.
 
 **Service worker updates [v1.1]**
 
@@ -246,16 +259,16 @@ The File System Access save picker is not available on Android Chrome. Use a Blo
 
 ## Testing and developer tooling **[v1.1]**
 
-| Tool                                              | Purpose                                                                                                                              |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Biome (or ESLint + Prettier)                      | Lint and format, run on every agent edit                                                                                             |
-| `tsc --noEmit` (strict)                           | Typecheck gate                                                                                                                       |
-| Vitest + `fake-indexeddb`                         | Storage module, backup/restore round-trip, schema validation, save logic                                                             |
-| Playwright                                        | E2E on Chromium with Android-like viewport: install, offline reload, typing, formatting, export, backup/restore                      |
-| `size-limit`                                      | Fails the build when core JS passes budget                                                                                           |
-| Lighthouse CI (PWA checks)                        | Installability and service worker sanity                                                                                             |
-| GitHub Actions + Cloudflare Pages or GitHub Pages | CI on every push, auto deploy on main                                                                                                |
-| Test font                                         | A free TTF renamed to a custom family for automated tests; the real Kruti Dev is used only in manual device checks and is gitignored |
+| Tool                                              | Purpose                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Biome (or ESLint + Prettier)                      | Lint and format, run on every agent edit                                                                                                                                                                                                                                       |
+| `tsc --noEmit` (strict)                           | Typecheck gate                                                                                                                                                                                                                                                                 |
+| Vitest + `fake-indexeddb`                         | Storage module, backup/restore round-trip, schema validation, save logic                                                                                                                                                                                                       |
+| Playwright                                        | E2E on Chromium (Pixel 7 project) + viewport matrix spec (800x1280, 1280x800, 600x960, 1440x900, 390x844 smoke): layout, overflow, docked-vs-sheet panel, committed baselines in `__snapshots__/` — every UI task re-runs the matrix and the images are reviewed before commit |
+| `size-limit` + `size:budget`                      | Fail over 450 KB gzipped total JS; warn over 350 KB with a per-chunk table **[v2: was 300 hard]**                                                                                                                                                                              |
+| Lighthouse CI (PWA checks)                        | Installability and service worker sanity                                                                                                                                                                                                                                       |
+| GitHub Actions + Cloudflare Pages or GitHub Pages | CI on every push, auto deploy on main                                                                                                                                                                                                                                          |
+| Test font                                         | A free TTF renamed to a custom family for automated tests; the real Kruti Dev is used only in manual device checks and is gitignored                                                                                                                                           |
 
 Definition of done for every task: typecheck, lint, unit tests, `size-limit`, and relevant Playwright test pass; then a manual check on the Android device when the task touches input, fonts or layout.
 
@@ -263,7 +276,7 @@ Definition of done for every task: typecheck, lint, unit tests, `size-limit`, an
 
 **Performance tactics**
 
-- Preact instead of React; Tiptap extensions imported individually; table, export and import code lazy-loaded (but precached)
+- React 19 + `@tiptap/react` selectors; Tiptap extensions imported individually; table, export, import and overlay-shell code lazy-loaded (but precached)
 - Lazy-load shadcn dialogs and heavy menus; icons imported individually
 - Fonts and images read from IndexedDB lazily; ProseMirror's own efficient rendering for large docs
 

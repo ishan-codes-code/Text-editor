@@ -275,6 +275,30 @@ export async function registerStoredFonts(
   const loaded: string[] = [];
   const failed: string[] = [];
   for (const font of fonts) {
+    // Skip faces already registered and loaded this session (upload
+    // registers immediately, so a reload would otherwise double-add).
+    let already = false;
+    try {
+      const faces = (
+        document as unknown as {
+          fonts?: { values?: () => Iterable<FontFace> };
+        }
+      ).fonts;
+      if (faces !== undefined && typeof faces.values === "function") {
+        for (const face of faces.values()) {
+          if (face.family === font.family && face.status === "loaded") {
+            already = true;
+            break;
+          }
+        }
+      }
+    } catch {
+      // FontFaceSet enumeration unavailable: fall through and register.
+    }
+    if (already) {
+      loaded.push(font.family);
+      continue;
+    }
     if (await registerFontFace(font.family, font.blob))
       loaded.push(font.family);
     else failed.push(font.family);

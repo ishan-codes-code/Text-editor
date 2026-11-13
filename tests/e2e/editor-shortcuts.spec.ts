@@ -123,7 +123,7 @@ test("link via Ctrl+K opens the dialog and applies", async ({ page }) => {
   await page.keyboard.type("example");
   await selectAll(page);
   await page.keyboard.press("ControlOrMeta+k");
-  const dialog = page.locator("dialog[open]");
+  const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Add link");
   await dialog.getByLabel("URL").fill("https://example.com");
   await dialog.getByRole("button", { name: "Apply" }).click();
@@ -176,12 +176,8 @@ test("Ctrl+S saves and confirms", async ({ page }) => {
   await readyEditor(page);
   await page.keyboard.type("save me");
   await page.keyboard.press("ControlOrMeta+s");
-  await expect(
-    page
-      .getByTestId("toaster")
-      .getByRole("status")
-      .filter({ hasText: "Saved" }),
-  ).toBeVisible();
+  // sonner's toasts carry no role; assert the toast text instead.
+  await expect(page.getByTestId("toaster").getByText("Saved")).toBeVisible();
   await expect(page.getByTestId("save-status")).toContainText(/Saved/, {
     timeout: 5000,
   });

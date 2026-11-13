@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // production Chrome Blobs implement the full API.
 (globalThis as { Blob: unknown }).Blob = NodeBlob;
 
-import { Autosave } from "./autosave";
+import type { JSONContent } from "@tiptap/core";
 import { createBackup } from "./backup";
 import { blobToBytes, blobToText } from "./blob";
 import { EditorDatabase } from "./db";
@@ -23,6 +23,7 @@ import {
 } from "./documents";
 import { acquireDocLock } from "./locks";
 import { parseBackup, RestoreError, restoreBackup } from "./restore";
+import { SaveQueue, type SaveState } from "./saveQueue";
 import { MAX_SNAPSHOTS_PER_DOC, maybeSnapshot } from "./snapshots";
 
 let db: EditorDatabase;
@@ -97,6 +98,76 @@ describe("documents", () => {
     expect(JSON.stringify(saved?.content)).toContain("hello brave world");
   });
 
+  it("lists from the content-free projection, not the docs table", async () => {
+    const doc = await createDoc("Meta check", db);
+    const big = `x`.repeat(50_000);
+    await saveDocContent(
+      doc.id,
+      {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: big }] },
+        ],
+      },
+      big,
+      db,
+    );
+    // The projection carries no content field at all.
+    const rows = await db.docMeta.toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0] !== undefined && "content" in rows[0]).toBe(false);
+    expect(rows[0]?.wordCount).toBe(1);
+    const listed = await listDocs(db);
+    expect(listed[0]?.title).toBe("Meta check");
+    expect(listed[0] !== undefined && "content" in listed[0]).toBe(false);
+  });
+
+  it("duplicating a doc copies its images under new ids", async () => {
+    const doc = await createDoc("Illustrated", db);
+    const imageId = "img-original";
+    await db.images.add({
+      id: imageId,
+      docId: doc.id,
+      blob: testBlob(["pixels"], "image/webp"),
+      mime: "image/webp",
+    });
+    await saveDocContent(
+      doc.id,
+      {
+        type: "doc",
+        content: [
+          {
+            type: "imageRef",
+            attrs: { imageId },
+          },
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "caption" }],
+          },
+        ],
+      },
+      "caption",
+      db,
+    );
+    const copy = await duplicateDoc(doc.id, db);
+    if (copy === undefined) throw new Error("duplicateDoc returned undefined");
+    const copyContent = JSON.stringify(copy.content);
+    // The copy references a NEW image id, never the original's.
+    expect(copyContent).not.toContain(imageId);
+    const copyImages = await db.images.where("docId").equals(copy.id).toArray();
+    expect(copyImages).toHaveLength(1);
+    const copyImageId = copyImages[0]?.id;
+    expect(copyImageId).toBeDefined();
+    expect(copyImageId).not.toBe(imageId);
+    expect(copyContent).toContain(copyImageId);
+    // Deleting the original (and its images) leaves the copy intact.
+    await deleteDoc(doc.id, db);
+    expect(await db.images.where("docId").equals(copy.id).count()).toBe(1);
+    expect(JSON.stringify((await getDoc(copy.id, db))?.content)).toContain(
+      copyImageId,
+    );
+  });
+
   it("deleting a doc removes its snapshots and images", async () => {
     const doc = await createDoc("T", db);
     await maybeSnapshot(doc.id, { type: "doc" }, Date.now(), db);
@@ -112,16 +183,25 @@ describe("documents", () => {
   });
 });
 
-describe("autosave", () => {
+describe("save queue", () => {
   it("debounces rapid edits into one save", async () => {
     vi.useFakeTimers();
     const saves: string[] = [];
-    const auto = new Autosave(async (_json, text) => {
+    const auto = new SaveQueue(async (_json: JSONContent, text: string) => {
       saves.push(text);
     }, {});
-    auto.schedule({ type: "doc" }, "one");
-    auto.schedule({ type: "doc" }, "one two");
-    auto.schedule({ type: "doc" }, "one two three");
+    auto.schedule(
+      () => ({ type: "doc" }),
+      () => "one",
+    );
+    auto.schedule(
+      () => ({ type: "doc" }),
+      () => "one two",
+    );
+    auto.schedule(
+      () => ({ type: "doc" }),
+      () => "one two three",
+    );
     expect(saves).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(400);
     expect(saves).toEqual(["one two three"]);
@@ -132,16 +212,19 @@ describe("autosave", () => {
     vi.useFakeTimers();
     const saves: string[] = [];
     const states: string[] = [];
-    const auto = new Autosave(
-      async (_json, text) => {
+    const auto = new SaveQueue(
+      async (_json: JSONContent, text: string) => {
         saves.push(text);
       },
-      { onStateChange: (s) => states.push(s) },
+      { onStateChange: (s: SaveState) => states.push(s) },
     );
     // Crash scenario: the tab is killed ~100 ms after the last keystroke,
     // well inside the 400 ms debounce. flush() (visibilitychange/pagehide)
     // must still persist everything, so at most the debounce window is lost.
-    auto.schedule({ type: "doc" }, "unsaved work");
+    auto.schedule(
+      () => ({ type: "doc" }),
+      () => "unsaved work",
+    );
     await vi.advanceTimersByTimeAsync(100);
     expect(saves).toHaveLength(0);
     await auto.flush();
@@ -153,11 +236,14 @@ describe("autosave", () => {
   it("uses the long debounce for very large docs", async () => {
     vi.useFakeTimers();
     let saves = 0;
-    const auto = new Autosave(async () => {
+    const auto = new SaveQueue(async (_json: JSONContent, _text: string) => {
       saves += 1;
     }, {});
     const big = new Array(20_001).fill("word").join(" ");
-    auto.schedule({ type: "doc" }, big);
+    auto.schedule(
+      () => ({ type: "doc" }),
+      () => big,
+    );
     await vi.advanceTimersByTimeAsync(400);
     expect(saves).toBe(0);
     await vi.advanceTimersByTimeAsync(800);
@@ -171,19 +257,89 @@ describe("autosave", () => {
     vi.useFakeTimers();
     let attempts = 0;
     const states: string[] = [];
-    const auto = new Autosave(
-      async () => {
+    const auto = new SaveQueue(
+      async (_json: JSONContent, _text: string) => {
         attempts += 1;
         if (attempts === 1) throw new Error("quota?");
       },
-      { onStateChange: (s) => states.push(s) },
+      { onStateChange: (s: SaveState) => states.push(s) },
     );
-    auto.schedule({ type: "doc" }, "x");
+    auto.schedule(
+      () => ({ type: "doc" }),
+      () => "x",
+    );
     await vi.advanceTimersByTimeAsync(400);
     expect(states).toContain("error");
     await auto.flush();
     expect(attempts).toBe(2);
     expect(states.at(-1)).toBe("saved");
+    auto.dispose();
+  });
+
+  it("serializes at write time, so an older save never overwrites newer content", async () => {
+    vi.useFakeTimers();
+    const seen: { text: string; generation: number }[] = [];
+    let liveText = "v1";
+    const auto = new SaveQueue(async (_json: JSONContent, text: string) => {
+      seen.push({ text, generation: auto.scheduledGeneration });
+    }, {});
+    // Rapid keystrokes coalesce: only the newest generation is written, and
+    // the payload is serialized when the write runs — not per keystroke.
+    auto.schedule(
+      () => ({ type: "doc", v: 1 }),
+      () => liveText,
+    );
+    liveText = "v2";
+    auto.schedule(
+      () => ({ type: "doc", v: 2 }),
+      () => liveText,
+    );
+    liveText = "v3";
+    auto.schedule(
+      () => ({ type: "doc" }),
+      () => liveText,
+    );
+    expect(auto.scheduledGeneration).toBe(3);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toEqual({ text: "v3", generation: 3 });
+    expect(auto.writtenGeneration).toBe(3);
+    auto.dispose();
+  });
+
+  it("flush drains an in-flight write before a newer generation", async () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const auto = new SaveQueue(async (_json: JSONContent, text: string) => {
+      order.push(`start:${text}`);
+      if (text === "first") await gate;
+      order.push(`end:${text}`);
+    }, {});
+    auto.schedule(
+      () => ({ type: "doc" }),
+      () => "first",
+    );
+    const flushPromise = auto.flush();
+    auto.schedule(
+      () => ({ type: "doc" }),
+      () => "second",
+    );
+    const fullFlush = auto.flush();
+    release();
+    await flushPromise;
+    await fullFlush;
+    // Sequential single-writer order: first completes, then the newer write.
+    expect(order).toEqual([
+      "start:first",
+      "end:first",
+      "start:second",
+      "end:second",
+    ]);
+    expect(auto.writtenGeneration).toBe(2);
     auto.dispose();
   });
 });
@@ -289,6 +445,38 @@ describe("backup and restore", () => {
       expect(report.docsSkippedNewer).toBe(1);
       expect(report.docsRestored).toBe(0);
       expect((await target.docs.get(docId))?.wordCount).toBe(1);
+    } finally {
+      await target.delete();
+    }
+  });
+
+  it("delivers the pre-restore backup before wiping anything", async () => {
+    const docId = await seed();
+    const blob = await createBackup({ includeSnapshots: false }, db);
+    const target = new EditorDatabase(`predeliver-${Date.now()}`);
+    try {
+      const local = await createDoc("Local work", target);
+      const delivered: Blob[] = [];
+      const { report } = await restoreBackup(blob, "replace", target, {
+        onPreRestoreBackup: async (pre) => {
+          // The hook runs before the wipe: the local doc must still exist,
+          // and the delivered backup must already contain it.
+          expect(await target.docs.get(local.id)).not.toBeUndefined();
+          delivered.push(pre);
+          const entries = (await import("fflate")).unzipSync(
+            await blobToBytes(pre),
+          );
+          const docs = JSON.parse(
+            new TextDecoder().decode(entries["docs.json"]),
+          ) as { id: string }[];
+          expect(docs.some((d) => d.id === local.id)).toBe(true);
+        },
+      });
+      expect(delivered).toHaveLength(1);
+      expect(report.docsRestored).toBe(1);
+      // Replace wiped the local doc and restored the backup instead.
+      expect(await target.docs.get(local.id)).toBeUndefined();
+      expect((await target.docs.get(docId))?.title).toBe("Backup me");
     } finally {
       await target.delete();
     }

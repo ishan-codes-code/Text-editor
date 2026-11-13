@@ -6,7 +6,8 @@ import {
   RefreshCw,
   Settings,
   Sun,
-} from "lucide-preact";
+} from "lucide-react";
+import { useTheme } from "next-themes";
 import {
   lazy,
   Suspense,
@@ -16,24 +17,31 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ExportFormat } from "./components/ExportSheet";
+import { toast } from "sonner";
+import { PalettePanel } from "./components/CharPalette";
+import { DocsPanel } from "./components/DocsSheet";
+import { type ExportFormat, ExportPanel } from "./components/ExportSheet";
 import { FindBar } from "./components/FindBar";
-import {
-  LAST_CUSTOM_FONT_KEY,
-  MAX_RECENT_GLYPHS,
-  PALETTE_RECENT_KEY,
-} from "./components/paletteGlyphs";
+import { FontPanel } from "./components/FontManager";
+import { LinkForm } from "./components/LinkDialog";
+import { LAST_CUSTOM_FONT_KEY } from "./components/paletteGlyphs";
+import { SettingsPanel } from "./components/SettingsSheet";
 import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { Button } from "./components/ui/button";
-import { Toaster, toast } from "./components/ui/sonner";
+import { Toaster } from "./components/ui/sonner";
+import {
+  remeasureAfterFontsLoad,
+  resolveOpenContent,
+  setContentWhenReady,
+} from "./editor/applyContent";
 import { sanitizePastedHTML } from "./editor/pastePolicy";
 import { useTiptapEditor } from "./hooks/useTiptapEditor";
+import { useOverlayStore } from "./overlays/store";
 import { ensurePersistentStorage, initPwa } from "./pwa";
+import { useSessionStore } from "./session/store";
 import {
-  Autosave,
   acquireDocLock,
-  addFont,
   addImage,
   backupFileName,
   createBackup,
@@ -41,11 +49,9 @@ import {
   type DocListItem,
   type DocLock,
   deleteDoc,
-  deleteFont,
   deliverBackup,
   duplicateDoc,
   type FontRecord,
-  FontValidationError,
   getDoc,
   getSetting,
   listDocs,
@@ -54,96 +60,39 @@ import {
   prepareImage,
   recordBackupTime,
   registerStoredFonts,
-  renameDoc,
   restoreBackup,
+  SaveQueue,
   type SaveState,
   SETTINGS_KEYS,
   saveDocContent,
-  searchDocs,
   setDocTitleFont,
   setSetting,
 } from "./storage";
 
-// Heavy Radix dialogs load on demand, never in the core chunk: this also
-// keeps Vitest's jsdom run (whose SSR externalizer bypasses the
-// preact/compat alias for Radix's CJS deps) from executing Radix trees.
-// Behavior is covered by the Playwright suite in real Chromium instead.
-const DocsSheet = lazy(() =>
-  import("./components/DocsSheet").then((module) => ({
-    default: module.DocsSheet,
-  })),
-);
-const SettingsSheet = lazy(() =>
-  import("./components/SettingsSheet").then((module) => ({
-    default: module.SettingsSheet,
-  })),
-);
-const LinkDialog = lazy(() =>
-  import("./components/LinkDialog").then((module) => ({
-    default: module.LinkDialog,
-  })),
-);
-const FontManager = lazy(() =>
-  import("./components/FontManager").then((module) => ({
-    default: module.FontManager,
-  })),
-);
-const CharPalette = lazy(() =>
-  import("./components/CharPalette").then((module) => ({
-    default: module.CharPalette,
-  })),
-);
-const ExportSheet = lazy(() =>
-  import("./components/ExportSheet").then((module) => ({
-    default: module.ExportSheet,
+// The Radix/vaul overlay shells stay out of the core chunk: panels are
+// light, but Dialog/Sheet/Drawer mount only when an overlay opens. The
+// service worker precaches the chunk so sheets work offline.
+const OverlayHost = lazy(() =>
+  import("./overlays/OverlayHost").then((module) => ({
+    default: module.OverlayHost,
   })),
 );
 
-const THEME_KEY = "editor:theme";
 const BACKUP_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const ZOOM_OPTIONS = ["fit", "0.5", "0.75", "1", "1.25", "1.5", "2"];
 
-function currentTheme(): "light" | "dark" {
-  if (typeof document === "undefined") return "light";
-  return document.documentElement.classList.contains("dark") ? "dark" : "light";
-}
-
 function ThemeToggle() {
-  const [theme, setTheme] = useState<"light" | "dark">(currentTheme);
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(THEME_KEY);
-      const initial =
-        stored === "light" || stored === "dark"
-          ? stored
-          : window.matchMedia("(prefers-color-scheme: dark)").matches
-            ? "dark"
-            : "light";
-      document.documentElement.classList.toggle("dark", initial === "dark");
-      setTheme(initial);
-    } catch {
-      // Storage can throw in private mode; the default theme still applies.
-    }
-  }, []);
+  const { resolvedTheme, setTheme } = useTheme();
+  const dark = resolvedTheme === "dark";
   return (
     <Button
       variant="ghost"
       size="icon"
-      aria-label={
-        theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
-      }
-      onClick={() => {
-        const next = theme === "dark" ? "light" : "dark";
-        document.documentElement.classList.toggle("dark", next === "dark");
-        try {
-          localStorage.setItem(THEME_KEY, next);
-        } catch {
-          // Ignore; the toggle still works for this session.
-        }
-        setTheme(next);
-      }}
+      className="size-11"
+      aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+      onClick={() => setTheme(dark ? "light" : "dark")}
     >
-      {theme === "dark" ? <Sun /> : <Moon />}
+      {dark ? <Sun /> : <Moon />}
     </Button>
   );
 }
@@ -153,60 +102,60 @@ export function App() {
   const [persisted, setPersisted] = useState<boolean | null>(null);
   const [docs, setDocs] = useState<DocListItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [docQuery, setDocQuery] = useState("");
   const [readOnly, setReadOnly] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [words, setWords] = useState(0);
-  const [chars, setChars] = useState(0);
-  const [zoom, setZoom] = useState<string>("1");
+  const [zoom, setZoom] = useState<string>("fit");
+  const [fitScale, setFitScale] = useState(1);
   const [keepColors, setKeepColors] = useState(false);
   const [fonts, setFonts] = useState<FontRecord[]>([]);
-  const [fontError, setFontError] = useState<string | null>(null);
-  const [fontManagerOpen, setFontManagerOpen] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [paletteRecent, setPaletteRecent] = useState<string[]>([]);
   const [defaultFont, setDefaultFont] = useState("");
   const [findState, setFindState] = useState<{
     open: boolean;
     withReplace: boolean;
   }>({ open: false, withReplace: false });
   const [lastBackup, setLastBackup] = useState<number | null>(null);
-  const [linkOpen, setLinkOpen] = useState(false);
-  const [linkUrl, setLinkUrl] = useState("");
-  const [docsOpen, setDocsOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [restoring, setRestoring] = useState(false);
-  const [restoreMode, setRestoreMode] = useState<"merge" | "replace">("merge");
-  const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState<string | null>(null);
 
   const pwa = useMemo(() => initPwa(), []);
-  const autosaveRef = useRef<Autosave | null>(null);
+  const autosaveRef = useRef<SaveQueue | null>(null);
   const lockRef = useRef<DocLock | null>(null);
   const loadingRef = useRef(false);
   const activeIdRef = useRef<string | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const lastSnapshotCheckRef = useRef(0);
-  const backupFileRef = useRef<HTMLInputElement | null>(null);
   const imageFileRef = useRef<HTMLInputElement | null>(null);
   const importFileRef = useRef<HTMLInputElement | null>(null);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
+  const docsRef = useRef<DocListItem[]>([]);
+  docsRef.current = docs;
+  const fontsRef = useRef<FontRecord[]>([]);
+  fontsRef.current = fonts;
+  const keepColorsRef = useRef(false);
+  keepColorsRef.current = keepColors;
+  const lastBackupRef = useRef<number | null>(null);
+  lastBackupRef.current = lastBackup;
+  const persistedRef = useRef<boolean | null>(null);
+  persistedRef.current = persisted;
+  const defaultFontRef = useRef("");
+  defaultFontRef.current = defaultFont;
+  const lastCustomRef = useRef("");
 
   const refreshFonts = useCallback(async () => {
     setFonts(await listFonts());
+    lastCustomRef.current = await getSetting<string>(LAST_CUSTOM_FONT_KEY, "");
   }, []);
 
   const refreshDocs = useCallback(async () => {
-    const query = docQuery;
-    const items =
-      query.trim() === "" ? await listDocs() : await searchDocs(query);
-    setDocs(items);
-  }, [docQuery]);
+    setDocs(await listDocs());
+  }, []);
 
   const openDoc = useCallback(
     async (id: string) => {
       const editor = editorRef.current;
-      if (editor === null) return;
+      if (editor === null || editor.isDestroyed) return;
+      const session = useSessionStore.getState();
+      session.transition("switching");
       // Lock the surface while switching: keystrokes typed between the
       // flush and setContent would otherwise be silently wiped by the load.
       const wasEditable = editor.isEditable;
@@ -219,73 +168,150 @@ export function App() {
       lockRef.current?.release();
       lockRef.current = null;
 
-      const doc = await getDoc(id);
-      if (doc === undefined) {
+      try {
+        const doc = await getDoc(id);
+        if (doc === undefined) {
+          editor.setEditable(wasEditable);
+          session.transition("ready");
+          return;
+        }
+        const lock = await acquireDocLock(id);
+        lockRef.current = lock;
+        activeIdRef.current = id;
+
+        // A corrupt stored doc falls back to its newest loadable snapshot
+        // (or blank); the editor stays enabled and the failure is reported.
+        const { content, recovered } = await resolveOpenContent(id);
+        loadingRef.current = true;
+        await setContentWhenReady(editor, content);
+        editor.setEditable(lock.held);
+        loadingRef.current = false;
+        if (recovered) {
+          session.transition("error", {
+            error: "Stored content was corrupt; restored from snapshot.",
+          });
+          toast("Document recovered", {
+            description:
+              "The saved copy was unreadable, so the newest snapshot was opened instead.",
+          });
+          session.transition("ready");
+        }
+
+        const autosave = new SaveQueue(
+          async (json, text) => {
+            await saveDocContent(id, json, text);
+            setSavedAt(Date.now());
+            await refreshDocs();
+          },
+          { onStateChange: setSaveState },
+        );
+        autosaveRef.current = autosave;
+        setReadOnly(!lock.held);
+        setSaveState("saved");
+        setActiveId(id);
+        session.setActiveId(id);
+        session.transition("ready");
+        await setSetting(SETTINGS_KEYS.lastOpenedDoc, id);
+        await refreshDocs();
+      } catch {
         editor.setEditable(wasEditable);
-        return;
+        session.transition("error", { error: "Could not open the document." });
+        toast("Open failed", {
+          description: "That document could not be opened. Try again.",
+        });
+        session.transition("ready");
       }
-      const lock = await acquireDocLock(id);
-      lockRef.current = lock;
-      activeIdRef.current = id;
+    },
+    [refreshDocs],
+  );
 
-      loadingRef.current = true;
-      editor.commands.setContent(doc.content);
-      editor.setEditable(lock.held);
-      loadingRef.current = false;
+  const handleUpdate = useCallback((editor: Editor) => {
+    if (loadingRef.current) return;
+    // Word counts subscribe via StatusBar's useEditorState selector, so
+    // typing never re-renders this tree — only the autosave is scheduled.
+    const id = activeIdRef.current;
+    if (id === null) return;
+    autosaveRef.current?.schedule(
+      () => editor.getJSON(),
+      () => editor.getText(),
+    );
+    const now = Date.now();
+    if (now - lastSnapshotCheckRef.current > 60_000) {
+      lastSnapshotCheckRef.current = now;
+      void maybeSnapshot(id, editor.getJSON(), now);
+    }
+  }, []);
 
-      const autosave = new Autosave(
-        async (json, text) => {
-          await saveDocContent(id, json, text);
-          setSavedAt(Date.now());
-          await refreshDocs();
-        },
-        { onStateChange: setSaveState },
-      );
-      autosaveRef.current = autosave;
-      setReadOnly(!lock.held);
-      setSaveState("saved");
-      setActiveId(id);
-      setWords(doc.wordCount);
-      setChars(editor.getText().length);
-      await setSetting(SETTINGS_KEYS.lastOpenedDoc, id);
+  const handleDefaultFontChange = useCallback((family: string) => {
+    setDefaultFont(family);
+    void setSetting(SETTINGS_KEYS.defaultFont, family);
+  }, []);
+
+  const handleTitleFontChange = useCallback(
+    async (family: string | null) => {
+      const id = activeIdRef.current;
+      if (id === null) return;
+      await setDocTitleFont(id, family);
       await refreshDocs();
     },
     [refreshDocs],
   );
 
-  const recount = useCallback((editor: Editor) => {
-    const text = editor.getText();
-    const trimmed = text.trim();
-    setWords(trimmed === "" ? 0 : trimmed.split(/\s+/).length);
-    setChars(text.length);
+  const applyLink = useCallback((url: string) => {
+    const current = editorRef.current;
+    const href = url.trim();
+    if (current !== null) {
+      if (href === "") current.chain().focus().unsetLink().run();
+      else current.chain().focus().setLink({ href }).run();
+    }
+    useOverlayStore.getState().closeOverlay("link");
   }, []);
 
-  const handleUpdate = useCallback(
-    (editor: Editor) => {
-      if (loadingRef.current) return;
-      recount(editor);
-      const id = activeIdRef.current;
-      if (id === null) return;
-      autosaveRef.current?.schedule(editor.getJSON(), editor.getText());
-      const now = Date.now();
-      if (now - lastSnapshotCheckRef.current > 60_000) {
-        lastSnapshotCheckRef.current = now;
-        void maybeSnapshot(id, editor.getJSON(), now);
-      }
-    },
-    [recount],
-  );
+  const openFontManager = useCallback(() => {
+    const titleFont =
+      docsRef.current.find((doc) => doc.id === activeIdRef.current)
+        ?.titleFont ?? null;
+    useOverlayStore.getState().openOverlay({
+      id: "fonts",
+      kind: "sheet",
+      side: "right",
+      title: "Fonts",
+      description:
+        "Uploaded TTF/OTF fonts work offline. Kruti Dev is added like any other font.",
+      render: () => (
+        <FontPanel
+          fonts={fontsRef.current}
+          defaultFont={defaultFontRef.current}
+          onDefaultFontChange={handleDefaultFontChange}
+          titleFont={titleFont}
+          onTitleFontChange={(family) => void handleTitleFontChange(family)}
+          onChanged={() => void refreshFonts()}
+        />
+      ),
+    });
+  }, [handleDefaultFontChange, handleTitleFontChange, refreshFonts]);
 
   const openLinkDialog = useCallback(() => {
     const editor = editorRef.current;
     const attrs = editor?.getAttributes("link") as
       | { href?: string }
       | undefined;
-    setLinkUrl(attrs?.href ?? "");
-    setLinkOpen(true);
-  }, []);
+    const initialUrl = attrs?.href ?? "";
+    useOverlayStore.getState().openOverlay({
+      id: "link",
+      kind: "dialog",
+      title: "Add link",
+      description: "Enter the URL for the selected text (Ctrl+K).",
+      render: () => (
+        <LinkForm
+          initialUrl={initialUrl}
+          onApply={(url) => void applyLink(url)}
+        />
+      ),
+    });
+  }, [applyLink]);
 
-  const toggleFont = useCallback(async () => {
+  const toggleFont = useCallback(() => {
     const current = editorRef.current;
     if (current === null || current.isDestroyed) return;
     const uploaded = fonts.map((font) => font.family);
@@ -293,30 +319,35 @@ export function App() {
       toast("No uploaded fonts", {
         description: "Upload a font (for example Kruti Dev) first.",
       });
-      setFontManagerOpen(true);
+      openFontManager();
       return;
     }
+    // Apply to the editor synchronously: awaiting storage first would let
+    // the next click interleave mid-toggle and leave ProseMirror with a
+    // stale selection (the next palette insert then replaces the doc).
+    // The last custom family is mirrored in a ref so the toggle never
+    // needs an async read.
     const attrs = current.getAttributes("textStyle") as {
       fontFamily?: string;
     };
     const currentFamily = attrs.fontFamily ?? "";
     if (currentFamily !== "" && uploaded.includes(currentFamily)) {
-      // On a Hindi font: remember it and switch to the default English font.
-      await setSetting(LAST_CUSTOM_FONT_KEY, currentFamily);
+      // On a Hindi font: switch back to the default English font.
       if (defaultFont === "") current.chain().focus().unsetFontFamily().run();
       else current.chain().focus().setFontFamily(defaultFont).run();
-    } else {
-      const lastCustom = await getSetting<string>(
-        LAST_CUSTOM_FONT_KEY,
-        uploaded[0] as string,
-      );
-      const target = uploaded.includes(lastCustom)
-        ? lastCustom
-        : (uploaded[0] as string);
-      await setSetting(LAST_CUSTOM_FONT_KEY, target);
-      current.chain().focus().setFontFamily(target).run();
+      lastCustomRef.current = currentFamily;
+      void setSetting(LAST_CUSTOM_FONT_KEY, currentFamily);
+      return;
     }
-  }, [fonts, defaultFont]);
+    const fallback = uploaded[0] as string;
+    const target =
+      uploaded.includes(lastCustomRef.current) && lastCustomRef.current !== ""
+        ? lastCustomRef.current
+        : fallback;
+    current.chain().focus().setFontFamily(target).run();
+    lastCustomRef.current = target;
+    void setSetting(LAST_CUSTOM_FONT_KEY, target);
+  }, [defaultFont, fonts, openFontManager]);
 
   const handleImageFile = useCallback(async (file: File, atPos?: number) => {
     const docId = activeIdRef.current;
@@ -346,7 +377,7 @@ export function App() {
     }
   }, []);
 
-  const { mountRef, editor } = useTiptapEditor({
+  const { editor, EditorContent } = useTiptapEditor({
     // Mount non-editable: openDoc enables editing once the document is
     // loaded. Otherwise keystrokes typed between mount and setContent
     // would be silently wiped by the load.
@@ -354,7 +385,7 @@ export function App() {
     onUpdate: handleUpdate,
     onOpenLink: openLinkDialog,
     onOpenFind: (withReplace) => setFindState({ open: true, withReplace }),
-    onOpenPalette: () => setPaletteOpen(true),
+    onOpenPalette: () => openPalette(),
     onToggleFont: () => void toggleFont(),
     onImageFile: (file, atPos) => void handleImageFile(file, atPos),
     getKnownFamilies: () => fonts.map((font) => font.family),
@@ -363,6 +394,12 @@ export function App() {
 
   useEffect(() => {
     editorRef.current = editor;
+    if (typeof window !== "undefined" && editor !== null) {
+      (window as { __sel?: () => string }).__sel = () => {
+        const { from, to } = editor.state.selection;
+        return `${from}-${to}`;
+      };
+    }
   }, [editor]);
 
   // Boot: ensure at least one document, then open the last-opened one.
@@ -370,16 +407,15 @@ export function App() {
     if (editor === null) return;
     let cancelled = false;
     const boot = async () => {
+      useSessionStore.getState().transition("loading");
       // Register uploaded fonts BEFORE rendering any document that uses
       // them, so there is no wrong-glyph flash (and offline reloads render).
-      // Load failures used to be silent; name them so the user re-adds the
-      // file instead of staring at fallback glyphs.
-      const { failed: failedFonts } = await registerStoredFonts();
+      await registerStoredFonts();
       if (cancelled) return;
-      if (failedFonts.length > 0) {
-        toast("Some fonts could not load", {
-          description: `${failedFonts.join(", ")} — text in these fonts falls back until the file is re-added.`,
-        });
+      // Fonts arriving later change glyph metrics: re-measure the layout
+      // once they finish so line breaks and cursor geometry settle.
+      if (editorRef.current !== null) {
+        remeasureAfterFontsLoad(editorRef.current);
       }
       const [
         lastOpened,
@@ -388,15 +424,13 @@ export function App() {
         storedBackup,
         storedFonts,
         storedDefaultFont,
-        storedRecent,
       ] = await Promise.all([
         getSetting<string | null>(SETTINGS_KEYS.lastOpenedDoc, null),
-        getSetting<string>(SETTINGS_KEYS.zoom, "1"),
+        getSetting<string>(SETTINGS_KEYS.zoom, "fit"),
         getSetting<boolean>(SETTINGS_KEYS.keepPastedColors, false),
         getSetting<number | null>(SETTINGS_KEYS.lastBackup, null),
         listFonts(),
         getSetting<string>(SETTINGS_KEYS.defaultFont, ""),
-        getSetting<string[]>(PALETTE_RECENT_KEY, []),
       ]);
       if (cancelled) return;
       setZoom(storedZoom);
@@ -404,7 +438,6 @@ export function App() {
       setLastBackup(storedBackup);
       setFonts(storedFonts);
       setDefaultFont(storedDefaultFont);
-      setPaletteRecent(storedRecent.slice(0, MAX_RECENT_GLYPHS));
       let items = await listDocs();
       if (items.length === 0) {
         const doc = await createDoc("Untitled");
@@ -525,7 +558,7 @@ export function App() {
     if (defaultFont !== "" && editorRef.current !== null) {
       editorRef.current.chain().focus().setFontFamily(defaultFont).run();
     }
-    setDocsOpen(false);
+    useOverlayStore.getState().closeAllOverlays();
   }, [openDoc, refreshDocs, defaultFont]);
 
   const handleDelete = useCallback(
@@ -557,67 +590,13 @@ export function App() {
     [activeId, docs, openDoc],
   );
 
-  const handleUploadFont = useCallback(
-    async (file: File) => {
-      setFontError(null);
-      try {
-        const record = await addFont(file);
-        await refreshFonts();
-        await setSetting(LAST_CUSTOM_FONT_KEY, record.family);
-        toast("Font added", {
-          description: `${record.family} is ready and works offline.`,
-        });
-      } catch (error) {
-        const message =
-          error instanceof FontValidationError
-            ? error.message
-            : "That file could not be added.";
-        setFontError(message);
-      }
-    },
-    [refreshFonts],
-  );
-
-  const handleDeleteFont = useCallback(
-    async (id: string) => {
-      await deleteFont(id);
-      await refreshFonts();
-      toast("Font deleted", {
-        description:
-          "Existing text keeps the font name and falls back until the font is re-added.",
-      });
-    },
-    [refreshFonts],
-  );
-
-  const handleDefaultFontChange = useCallback((family: string) => {
-    setDefaultFont(family);
-    void setSetting(SETTINGS_KEYS.defaultFont, family);
+  const handleKeepColorsChange = useCallback((value: boolean) => {
+    setKeepColors(value);
+    void setSetting(SETTINGS_KEYS.keepPastedColors, value);
   }, []);
-
-  const activeTitleFont =
-    docs.find((doc) => doc.id === activeId)?.titleFont ?? null;
-
-  const handleTitleFontChange = useCallback(
-    async (family: string | null) => {
-      const id = activeIdRef.current;
-      if (id === null) return;
-      await setDocTitleFont(id, family);
-      await refreshDocs();
-    },
-    [refreshDocs],
-  );
 
   const handleInsertGlyph = useCallback((glyph: string) => {
     editorRef.current?.chain().focus().insertContent(glyph).run();
-    setPaletteRecent((previous) => {
-      const next = [glyph, ...previous.filter((item) => item !== glyph)].slice(
-        0,
-        MAX_RECENT_GLYPHS,
-      );
-      void setSetting(PALETTE_RECENT_KEY, next);
-      return next;
-    });
   }, []);
 
   const handleBackup = useCallback(async () => {
@@ -641,17 +620,26 @@ export function App() {
   }, []);
 
   const handleRestoreFile = useCallback(
-    async (file: File) => {
-      setRestoring(true);
+    async (file: File, restoreMode: "merge" | "replace") => {
+      const editor = editorRef.current;
+      const session = useSessionStore.getState();
+      session.transition("switching");
+      // Exclusive operation: flush pending saves and freeze the surface so
+      // no keystroke can land mid-restore.
+      await autosaveRef.current?.flush();
+      const wasEditable = editor?.isEditable ?? true;
+      editor?.setEditable(false);
       try {
-        const { report, preRestoreBackup } = await restoreBackup(
-          file,
-          restoreMode,
-        );
-        // The automatic pre-restore backup is handed to the user first, so a
-        // bad restore never strands them without the previous state.
-        const date = new Date().toISOString().slice(0, 10);
-        await deliverBackup(preRestoreBackup, `pre-restore-backup-${date}.zip`);
+        const { report } = await restoreBackup(file, restoreMode, undefined, {
+          // The pre-restore backup is delivered BEFORE the wipe, so a
+          // failed or regretted restore can always be undone.
+          onPreRestoreBackup: async (preRestoreBackup) => {
+            await deliverBackup(
+              preRestoreBackup,
+              `pre-restore-${backupFileName()}`,
+            );
+          },
+        });
         const items = await listDocs();
         setDocs(items);
         const current =
@@ -662,90 +650,179 @@ export function App() {
         if (current !== null) await openDoc(current);
         else if (items.length > 0) await openDoc(items[0]?.id as string);
         toast("Restore complete", {
-          description: `${report.docsRestored} docs, ${report.fontsRestored} fonts, ${report.imagesRestored} images (${report.mode}). Your pre-restore backup was downloaded first.`,
+          description: `${report.docsRestored} docs, ${report.fontsRestored} fonts, ${report.imagesRestored} images (${report.mode}). The previous state was downloaded first.`,
         });
       } catch (error) {
+        session.transition("error", {
+          error: error instanceof Error ? error.message : "Restore failed.",
+        });
         toast("Restore failed", {
           description:
             error instanceof Error
               ? error.message
               : "That file could not be restored.",
         });
-      } finally {
-        setRestoring(false);
+        session.transition("ready");
+        // The failed restore never touched the editor content: unfreeze it.
+        if (editor !== null && !editor.isDestroyed) {
+          editor.setEditable(wasEditable);
+        }
       }
     },
-    [openDoc, restoreMode],
+    [openDoc],
   );
 
-  const handleExport = useCallback(
-    async (format: ExportFormat) => {
-      const current = editorRef.current;
-      if (
-        current === null ||
-        current.isDestroyed ||
-        activeIdRef.current === null
-      ) {
-        toast("Nothing to export", {
-          description: "Open a document first.",
-        });
-        return;
-      }
-      // PDF costs nothing in bundle size: the print stylesheet does the work.
-      if (format === "pdf") {
-        setExportOpen(false);
-        window.print();
-        return;
-      }
-      setExportBusy(format);
+  const handleDuplicate = useCallback(
+    async (id: string) => {
+      const session = useSessionStore.getState();
+      session.transition("switching");
+      // Flush first so the copy includes the latest keystrokes.
+      await autosaveRef.current?.flush();
       try {
-        await autosaveRef.current?.flush();
-        const json = current.getJSON();
-        const title =
-          docs.find((doc) => doc.id === activeIdRef.current)?.title ??
-          "document";
-        if (format === "txt" || format === "md") {
-          const { jsonToMarkdown, jsonToPlainText } = await import(
-            "./export/formats"
-          );
-          const { deliverFile, exportFileName } = await import(
-            "./export/deliver"
-          );
-          const text =
-            format === "txt" ? jsonToPlainText(json) : jsonToMarkdown(json);
-          const mime = format === "txt" ? "text/plain" : "text/markdown";
-          await deliverFile(
-            new Blob([text], { type: `${mime};charset=utf-8` }),
-            exportFileName(title, format),
-            mime,
-          );
-        } else {
-          const { jsonToDocxBlob } = await import("./export/docxExport");
-          const { deliverFile, exportFileName } = await import(
-            "./export/deliver"
-          );
-          const blob = await jsonToDocxBlob(json, {
-            defaultFont: defaultFont === "" ? undefined : defaultFont,
-          });
-          await deliverFile(
-            blob,
-            exportFileName(title, "docx"),
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          );
-        }
-        toast("Export ready", {
-          description: "Choose where to save your file.",
-        });
-      } catch {
-        toast("Export failed", {
-          description: "Try again; your document is still safe.",
-        });
+        await duplicateDoc(id);
+        await refreshDocs();
       } finally {
-        setExportBusy(null);
+        session.transition("ready");
       }
     },
-    [defaultFont, docs],
+    [refreshDocs],
   );
+
+  const openDocs = useCallback(() => {
+    useOverlayStore.getState().openOverlay({
+      id: "docs",
+      kind: "sheet",
+      side: "left",
+      title: "Documents",
+      description: "Create, open, rename, duplicate, delete and search.",
+      render: () => (
+        <DocsPanel
+          docs={docsRef.current}
+          activeId={activeIdRef.current}
+          onOpen={(id) => {
+            useOverlayStore.getState().closeAllOverlays();
+            void openDoc(id);
+          }}
+          onNew={() => void handleNew()}
+          onDuplicate={(id) => void handleDuplicate(id)}
+          onDelete={(id) => void handleDelete(id)}
+          onChanged={() => void refreshDocs()}
+        />
+      ),
+    });
+  }, [handleDelete, handleDuplicate, handleNew, openDoc, refreshDocs]);
+
+  const openSettings = useCallback(() => {
+    useOverlayStore.getState().openOverlay({
+      id: "settings",
+      kind: "sheet",
+      side: "right",
+      title: "Settings",
+      description: "Storage, appearance and backup.",
+      render: () => (
+        <SettingsPanel
+          persisted={persistedRef.current}
+          keepColors={keepColorsRef.current}
+          onKeepColorsChange={handleKeepColorsChange}
+          lastBackup={lastBackupRef.current}
+          onBackup={() => void handleBackup()}
+          onRestoreFile={(file, mode) => handleRestoreFile(file, mode)}
+        />
+      ),
+    });
+  }, [handleBackup, handleKeepColorsChange, handleRestoreFile]);
+
+  const openPalette = useCallback(() => {
+    const activeFamily =
+      (
+        editorRef.current?.getAttributes("textStyle") as
+          | { fontFamily?: string }
+          | undefined
+      )?.fontFamily ?? null;
+    useOverlayStore.getState().openOverlay({
+      id: "palette",
+      kind: "sheet",
+      side: "right",
+      title: "Special characters",
+      description: "Tap to insert at the cursor.",
+      render: () => (
+        <PalettePanel
+          activeFamily={activeFamily}
+          onInsert={(glyph) => handleInsertGlyph(glyph)}
+        />
+      ),
+    });
+  }, [handleInsertGlyph]);
+
+  const exportBusyRef = useRef<string | null>(null);
+  exportBusyRef.current = exportBusy;
+
+  const handleExport = useCallback(async (format: ExportFormat) => {
+    const current = editorRef.current;
+    if (
+      current === null ||
+      current.isDestroyed ||
+      activeIdRef.current === null
+    ) {
+      toast("Nothing to export", {
+        description: "Open a document first.",
+      });
+      return;
+    }
+    // PDF costs nothing in bundle size: the print stylesheet does the work.
+    if (format === "pdf") {
+      useOverlayStore.getState().closeOverlay("export");
+      window.print();
+      return;
+    }
+    setExportBusy(format);
+    try {
+      await autosaveRef.current?.flush();
+      const json = current.getJSON();
+      const title =
+        docsRef.current.find((doc) => doc.id === activeIdRef.current)?.title ??
+        "document";
+      if (format === "txt" || format === "md") {
+        const { jsonToMarkdown, jsonToPlainText } = await import(
+          "./export/formats"
+        );
+        const { deliverFile, exportFileName } = await import(
+          "./export/deliver"
+        );
+        const text =
+          format === "txt" ? jsonToPlainText(json) : jsonToMarkdown(json);
+        const mime = format === "txt" ? "text/plain" : "text/markdown";
+        await deliverFile(
+          new Blob([text], { type: `${mime};charset=utf-8` }),
+          exportFileName(title, format),
+          mime,
+        );
+      } else {
+        const { jsonToDocxBlob } = await import("./export/docxExport");
+        const { deliverFile, exportFileName } = await import(
+          "./export/deliver"
+        );
+        const blob = await jsonToDocxBlob(json, {
+          defaultFont:
+            defaultFontRef.current === "" ? undefined : defaultFontRef.current,
+        });
+        await deliverFile(
+          blob,
+          exportFileName(title, "docx"),
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        );
+      }
+      toast("Export ready", {
+        description: "Choose where to save your file.",
+      });
+    } catch {
+      toast("Export failed", {
+        description: "Try again; your document is still safe.",
+      });
+    } finally {
+      setExportBusy(null);
+    }
+  }, []);
 
   const handleImportFile = useCallback(
     async (file: File) => {
@@ -763,8 +840,8 @@ export function App() {
           // by name where the family is in the font store.
           current?.commands.setContent(
             sanitizePastedHTML(result.html, {
-              knownFamilies: fonts.map((font) => font.family),
-              keepColors,
+              knownFamilies: fontsRef.current.map((font) => font.family),
+              keepColors: keepColorsRef.current,
             }),
           );
         }
@@ -784,26 +861,59 @@ export function App() {
         setExportBusy(null);
       }
     },
-    [fonts, keepColors, openDoc, refreshDocs],
+    [openDoc, refreshDocs],
   );
 
-  const applyLink = useCallback(() => {
-    const current = editorRef.current;
-    const href = linkUrl.trim();
-    if (current !== null) {
-      if (href === "") current.chain().focus().unsetLink().run();
-      else current.chain().focus().setLink({ href }).run();
-    }
-    setLinkOpen(false);
-  }, [linkUrl]);
+  const openExport = useCallback(() => {
+    const title =
+      docsRef.current.find((doc) => doc.id === activeIdRef.current)?.title ??
+      "document";
+    useOverlayStore.getState().openOverlay({
+      id: "export",
+      kind: "sheet",
+      side: "right",
+      title: "Export and import",
+      description: `Export "${title}" or import a file as a new document. Everything works offline.`,
+      render: () => (
+        <ExportPanel
+          docTitle={title}
+          busy={exportBusyRef.current}
+          onExport={(format) => void handleExport(format)}
+          importFileRef={importFileRef}
+          onImportClick={() => importFileRef.current?.click()}
+          onImportFile={(file) => void handleImportFile(file)}
+        />
+      ),
+    });
+  }, [handleExport, handleImportFile]);
 
   const backupStale =
     lastBackup !== null && Date.now() - lastBackup > BACKUP_STALE_MS;
   const neverBackedUp = lastBackup === null;
-  const zoomValue = zoom === "fit" ? undefined : Number(zoom);
+
+  // Fit-to-width (default): scale the A4 canvas to its container, capped at
+  // 1 so wide screens never upscale. Fixed percentages skip measuring.
+  // The observer watches the UNZOOMED wrapper: measuring the zoomed section
+  // itself feeds its own zoom back into clientWidth (Chrome reports the
+  // unscaled layout width), which oscillates fitScale forever — the editor
+  // box never stabilizes and every click times out.
+  useEffect(() => {
+    if (zoom !== "fit") return;
+    const target = canvasWrapRef.current;
+    if (target === null) return;
+    const measure = () => {
+      const next = Math.min(1, target.clientWidth / 794);
+      setFitScale((prev) => (Math.abs(next - prev) < 0.001 ? prev : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [zoom]);
+  const zoomFactor = zoom === "fit" ? fitScale : Number(zoom);
 
   return (
-    <div className="min-h-dvh bg-background text-foreground">
+    <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground print:h-auto print:overflow-visible">
       {updateAvailable && (
         <div
           role="alert"
@@ -814,11 +924,18 @@ export function App() {
             type="button"
             className="inline-flex items-center gap-1 font-medium underline underline-offset-4"
             onClick={() => {
-              pwa.update().catch(() => {
-                toast("Update failed", {
-                  description: "Try again once your edits are saved.",
-                });
-              });
+              // "Update now" reloads the page: flush every pending save
+              // first so no keystroke is lost to the reload.
+              void (async () => {
+                await autosaveRef.current?.flush();
+                try {
+                  await pwa.update();
+                } catch {
+                  toast("Update failed", {
+                    description: "Try again once your edits are saved.",
+                  });
+                }
+              })();
             }}
           >
             <RefreshCw className="size-4" /> Update now
@@ -857,21 +974,23 @@ export function App() {
         </div>
       )}
 
-      <header className="sticky top-0 z-10 border-b bg-background/95 print:hidden">
-        <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-2">
+      <header className="z-10 shrink-0 border-b bg-background/95 print:hidden">
+        <div className="flex items-center gap-2 px-4 py-2">
           <Button
             variant="outline"
             size="sm"
+            className="h-11 landscape:lg:hidden"
             aria-label="Documents"
-            onClick={() => setDocsOpen(true)}
+            onClick={() => openDocs()}
           >
             <FileText className="size-4" /> Docs
           </Button>
           <Button
             variant="outline"
             size="sm"
+            className="h-11"
             aria-label="Export or import"
-            onClick={() => setExportOpen(true)}
+            onClick={() => openExport()}
           >
             <Download className="size-4" /> Export
           </Button>
@@ -892,7 +1011,7 @@ export function App() {
                 setZoom(value);
                 void setSetting(SETTINGS_KEYS.zoom, value);
               }}
-              className="h-9 rounded-md border border-input bg-background px-1 text-sm"
+              className="h-11 rounded-md border border-input bg-background px-1 text-sm"
             >
               {ZOOM_OPTIONS.map((option) => (
                 <option key={option} value={option}>
@@ -904,8 +1023,9 @@ export function App() {
             <Button
               variant="ghost"
               size="icon"
+              className="size-11"
               aria-label="Open settings"
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => openSettings()}
             >
               <Settings />
             </Button>
@@ -913,7 +1033,7 @@ export function App() {
         </div>
 
         <div className="border-t">
-          <div className="mx-auto max-w-3xl">
+          <div>
             <Toolbar
               editor={editor}
               onOpenLink={openLinkDialog}
@@ -923,9 +1043,9 @@ export function App() {
                   withReplace: state.withReplace,
                 }))
               }
-              onOpenPalette={() => setPaletteOpen(true)}
+              onOpenPalette={() => openPalette()}
               onToggleFont={() => void toggleFont()}
-              onManageFonts={() => setFontManagerOpen(true)}
+              onManageFonts={() => openFontManager()}
               onInsertImage={() => imageFileRef.current?.click()}
               onSave={() => void flushNow()}
               saveLabel={
@@ -963,144 +1083,57 @@ export function App() {
         />
       )}
 
-      <main className="bg-muted/60 px-4 py-6 print:bg-white print:p-0">
-        <div className="mx-auto w-full max-w-[210mm]">
-          <section
-            aria-label="Editor"
-            className="rounded-sm bg-card px-6 py-8 text-card-foreground shadow-sm print:rounded-none print:shadow-none sm:px-10"
-            style={
-              zoomValue === undefined
-                ? undefined
-                : ({ zoom: zoomValue } as React.CSSProperties)
-            }
-          >
-            <div ref={mountRef} />
-          </section>
-
-          <StatusBar
-            words={words}
-            chars={chars}
-            saveState={saveState}
-            savedAt={savedAt}
-            readOnly={readOnly}
-          />
-          <p data-testid="persist-status" className="sr-only">
-            {persisted === null
-              ? "Storage: checking…"
-              : persisted
-                ? "Storage: persistent"
-                : "Storage: not persistent"}
-          </p>
-        </div>
-      </main>
-
-      {docsOpen && (
-        <Suspense fallback={null}>
-          <DocsSheet
-            open={docsOpen}
-            onOpenChange={setDocsOpen}
+      <div className="flex min-h-0 flex-1">
+        <aside
+          aria-label="Documents panel"
+          className="hidden min-h-0 w-72 shrink-0 overflow-y-auto overscroll-contain border-r bg-background px-3 py-4 landscape:lg:block print:hidden"
+        >
+          <DocsPanel
             docs={docs}
             activeId={activeId}
-            query={docQuery}
-            onQueryChange={(value) => void setDocQuery(value)}
             onOpen={(id) => {
-              setDocsOpen(false);
               void openDoc(id);
             }}
             onNew={() => void handleNew()}
-            onRename={(id, title) => {
-              void renameDoc(id, title).then(() => refreshDocs());
-            }}
-            onDuplicate={(id) => {
-              void duplicateDoc(id).then(() => refreshDocs());
-            }}
+            onDuplicate={(id) => void handleDuplicate(id)}
             onDelete={(id) => void handleDelete(id)}
+            onChanged={() => void refreshDocs()}
           />
-        </Suspense>
-      )}
-      {settingsOpen && (
-        <Suspense fallback={null}>
-          <SettingsSheet
-            open={settingsOpen}
-            onOpenChange={setSettingsOpen}
-            persisted={persisted}
-            keepColors={keepColors}
-            onKeepColorsChange={(value) => {
-              setKeepColors(value);
-              void setSetting(SETTINGS_KEYS.keepPastedColors, value);
-            }}
-            lastBackup={lastBackup}
-            onBackup={() => void handleBackup()}
-            onRestoreClick={() => backupFileRef.current?.click()}
-            restoring={restoring}
-            restoreMode={restoreMode}
-            onRestoreModeChange={setRestoreMode}
-            backupFileRef={backupFileRef}
-            onRestoreFile={(file) => void handleRestoreFile(file)}
-          />
-        </Suspense>
-      )}
-      {linkOpen && (
-        <Suspense fallback={null}>
-          <LinkDialog
-            open={linkOpen}
-            onOpenChange={setLinkOpen}
-            url={linkUrl}
-            onUrlChange={setLinkUrl}
-            onApply={applyLink}
-          />
-        </Suspense>
-      )}
-      {fontManagerOpen && (
-        <Suspense fallback={null}>
-          <FontManager
-            open={fontManagerOpen}
-            onOpenChange={setFontManagerOpen}
-            fonts={fonts}
-            defaultFont={defaultFont}
-            onDefaultFontChange={handleDefaultFontChange}
-            titleFont={activeTitleFont}
-            onTitleFontChange={(family) => void handleTitleFontChange(family)}
-            error={fontError}
-            onUpload={(file) => void handleUploadFont(file)}
-            onDelete={(id) => void handleDeleteFont(id)}
-          />
-        </Suspense>
-      )}
-      {paletteOpen && (
-        <Suspense fallback={null}>
-          <CharPalette
-            open={paletteOpen}
-            onOpenChange={setPaletteOpen}
-            activeFamily={
-              (
-                editor?.getAttributes("textStyle") as
-                  | { fontFamily?: string }
-                  | undefined
-              )?.fontFamily ?? null
-            }
-            recent={paletteRecent}
-            onInsert={handleInsertGlyph}
-          />
-        </Suspense>
-      )}
+        </aside>
 
-      {exportOpen && (
-        <Suspense fallback={null}>
-          <ExportSheet
-            open={exportOpen}
-            onOpenChange={setExportOpen}
-            docTitle={
-              docs.find((doc) => doc.id === activeId)?.title ?? "document"
-            }
-            busy={exportBusy}
-            onExport={(format) => void handleExport(format)}
-            importFileRef={importFileRef}
-            onImportClick={() => importFileRef.current?.click()}
-            onImportFile={(file) => void handleImportFile(file)}
-          />
-        </Suspense>
-      )}
+        <main
+          style={{ scrollbarGutter: "stable" }}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/60 px-4 py-6 print:overflow-visible print:bg-white print:p-0"
+        >
+          <div ref={canvasWrapRef} className="mx-auto w-full max-w-[210mm]">
+            <section
+              aria-label="Editor"
+              className="rounded-sm bg-card px-6 py-8 text-card-foreground shadow-sm print:rounded-none print:shadow-none sm:px-10"
+              style={{ zoom: zoomFactor } as React.CSSProperties}
+            >
+              <EditorContent editor={editor} />
+            </section>
+
+            <StatusBar
+              editor={editor}
+              saveState={saveState}
+              savedAt={savedAt}
+              readOnly={readOnly}
+            />
+            <p data-testid="persist-status" className="sr-only">
+              {persisted === null
+                ? "Storage: checking…"
+                : persisted
+                  ? "Storage: persistent"
+                  : "Storage: not persistent"}
+            </p>
+          </div>
+        </main>
+      </div>
+
+      <Suspense fallback={null}>
+        <OverlayHost />
+      </Suspense>
 
       <Toaster />
     </div>

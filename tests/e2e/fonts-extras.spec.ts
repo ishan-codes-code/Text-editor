@@ -41,20 +41,28 @@ test("font upload, dropdown, toggle, palette, and offline reload", async ({
 
   // Upload the fixture font through the font manager.
   await page.getByLabel("Font family").selectOption("@manage");
-  await expect(page.locator("dialog[open]")).toContainText("Fonts");
+  await expect(page.getByRole("dialog")).toContainText("Fonts");
   await page
     .locator('input[aria-label="Choose font file"]')
     .setInputFiles(FIXTURE_FONT);
-  await expect(page.locator("dialog[open]")).toContainText("TestFont");
+  await expect(page.getByRole("dialog")).toContainText("TestFont");
 
   // Reject an invalid file with a message, without closing the dialog.
   await page
     .locator('input[aria-label="Choose font file"]')
     .setInputFiles(FIXTURE_IMAGE);
-  await expect(page.locator("dialog[open] [role='alert']")).toContainText(
+  await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
     /not a font|header/i,
   );
   await page.keyboard.press("Escape");
+  // The drawer animates closed (~500 ms) and focus returns to the editor
+  // only at unmount: wait for hidden, or keystrokes land in the dying
+  // drawer and are lost.
+  await expect(page.getByRole("dialog")).toBeHidden();
+
+  // Focus return lands on the toolbar trigger by design: click back into
+  // the editor before typing instead of relying on focus timing.
+  await editor.click();
 
   // Apply the font to typed text via the toolbar dropdown.
   await page.keyboard.type("hindi");
@@ -76,15 +84,26 @@ test("font upload, dropdown, toggle, palette, and offline reload", async ({
   );
 
   // The palette inserts the tapped glyph at the cursor in the active font.
-  // ¼ sits in the first row, so no scrolling is needed to tap it. Refocus
-  // and collapse the toggle's selection first: like typing, insertion
-  // replaces a selected range.
-  await editor.click();
-  await page.keyboard.press("End");
+  // ¼ sits in the first row, so no scrolling is needed to tap it. The insert
+  // replaces a selected range, so the toggle's full-range selection must be
+  // collapsed first. Neither gesture is reliable on the first try: the
+  // synthetic click does not always collapse under CSS zoom, and End can be
+  // lost while focus settles after the drawer unmounts. Retry the gesture
+  // until the selection is a cursor, so the insert appends instead of
+  // replacing "hindi".
+  let collapsed = false;
+  for (let attempt = 0; attempt < 5 && !collapsed; attempt++) {
+    await editor.click();
+    await page.keyboard.press("End");
+    const range = await page.evaluate(
+      () => (window as unknown as { __sel?: () => string }).__sel?.() ?? "",
+    );
+    const [from, to] = range.split("-");
+    collapsed = from !== "" && from === to;
+  }
+  expect(collapsed).toBe(true);
   await page.keyboard.press("ControlOrMeta+Shift+p");
-  await expect(page.locator("dialog[open]")).toContainText(
-    "Special characters",
-  );
+  await expect(page.getByRole("dialog")).toContainText("Special characters");
   await page.getByRole("button", { name: "Insert ¼", exact: true }).click();
   await expect(editor).toContainText("¼");
   await page.keyboard.press("Escape");
@@ -98,9 +117,13 @@ test("font upload, dropdown, toggle, palette, and offline reload", async ({
   await page.reload();
   const offlineEditor = page.locator('[aria-label="Editor"] .tiptap');
   await expect(offlineEditor).toContainText("hindi");
-  await expect(
-    page.evaluate(() => document.fonts.check('16px "TestFont"')),
-  ).resolves.toBe(true);
+  // Poll: FontFace load state can lag a frame behind the boot await under
+  // parallel-worker CPU contention.
+  await expect
+    .poll(() => page.evaluate(() => document.fonts.check('16px "TestFont"')), {
+      timeout: 5000,
+    })
+    .toBe(true);
   const family = await offlineEditor
     .locator("span[style*='TestFont']")
     .evaluate((node) => getComputedStyle(node).fontFamily);
@@ -171,12 +194,14 @@ test("digit/space font names render: upload, select, computed style", async ({
   // Upload the renamed fixture (internal family "Test 010") through the
   // font manager: upload validation reads the name table, not the filename.
   await page.getByLabel("Font family").selectOption("@manage");
-  await expect(page.locator("dialog[open]")).toContainText("Fonts");
+  await expect(page.getByRole("dialog")).toContainText("Fonts");
   await page
     .locator('input[aria-label="Choose font file"]')
     .setInputFiles(FIXTURE_FONT_010);
-  await expect(page.locator("dialog[open]")).toContainText("Test 010");
+  await expect(page.getByRole("dialog")).toContainText("Test 010");
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await editor.click();
 
   // Select the digit-named font and type: the declaration must survive as
   // valid CSS (unquoted `010` invalidated it and the browser fell back).

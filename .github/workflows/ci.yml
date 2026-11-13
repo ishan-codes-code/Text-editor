@@ -36,6 +36,8 @@ jobs:
       - run: npm run build
       - run: npm run size
       - run: npm run e2e
+        env:
+          E2E_REUSE_BUILD: "1"
 
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'

@@ -33,7 +33,7 @@ export class RestoreError extends Error {
   }
 }
 
-interface ParsedBackup {
+export interface ParsedBackup {
   docs: ValidatedDoc[];
   settings: { key: string; value: unknown }[];
   snapshots: { docId: string; content: unknown; savedAt: number }[];
@@ -150,20 +150,27 @@ function fontMime(format: "ttf" | "otf"): string {
   return format === "otf" ? "font/otf" : "font/ttf";
 }
 
-/**
- * Restores a validated backup. Always creates an automatic pre-restore
- * backup first (returned to the caller for safekeeping). Each store is
- * written in its own transaction; validation happens before any write, so
- * a corrupt file leaves existing data untouched.
- */
-export async function restoreBackup(
-  blob: Blob,
-  mode: RestoreMode = "merge",
-  db: EditorDatabase = getDb(),
-): Promise<{ report: RestoreReport; preRestoreBackup: Blob }> {
-  const parsed = await parseBackup(blob);
-  const preRestoreBackup = await createBackup({ includeSnapshots: true }, db);
+export interface RestoreHooks {
+  /**
+   * Runs after validation and the automatic pre-restore backup, but BEFORE
+   * any wipe or write. The app delivers the backup to the user here
+   * (download/share), so a failed restore can always be undone.
+   */
+  onPreRestoreBackup?: (backup: Blob) => Promise<void>;
+}
 
+/**
+ * Writes an already-parsed backup in ONE transaction across every store:
+ * clear (replace mode) plus all puts commit atomically, so a crash or
+ * failure mid-restore can never leave half-written data behind. Validation
+ * happens in `parseBackup` before any write, so a corrupt file leaves
+ * existing data untouched.
+ */
+export async function writeParsedBackup(
+  parsed: ParsedBackup,
+  mode: RestoreMode,
+  db: EditorDatabase = getDb(),
+): Promise<RestoreReport> {
   const report: RestoreReport = {
     mode,
     docsRestored: 0,
@@ -174,98 +181,115 @@ export async function restoreBackup(
     snapshotsRestored: 0,
   };
 
-  if (mode === "replace") {
-    await db.transaction(
-      "rw",
-      [db.docs, db.fonts, db.images, db.settings, db.snapshots],
-      async () => {
+  await db.transaction(
+    "rw",
+    [db.docs, db.docMeta, db.fonts, db.images, db.settings, db.snapshots],
+    async () => {
+      if (mode === "replace") {
         await Promise.all([
           db.docs.clear(),
+          db.docMeta.clear(),
           db.fonts.clear(),
           db.images.clear(),
           db.settings.clear(),
           db.snapshots.clear(),
         ]);
-      },
-    );
-  }
-
-  await db.transaction("rw", db.docs, async () => {
-    for (const doc of parsed.docs) {
-      const record: DocRecord = {
-        id: doc.id,
-        title: doc.title,
-        titleFont: doc.titleFont,
-        content: (doc.content ?? { type: "doc" }) as DocRecord["content"],
-        wordCount: doc.wordCount,
-        createdAt: doc.createdAt,
-        updatedAt: doc.updatedAt,
-      };
-      if (mode === "merge") {
-        const existing = await db.docs.get(doc.id);
-        if (existing !== undefined && existing.updatedAt >= doc.updatedAt) {
-          report.docsSkippedNewer += 1;
-          continue;
-        }
       }
-      await db.docs.put(record);
-      report.docsRestored += 1;
-    }
-  });
 
-  await db.transaction("rw", db.fonts, async () => {
-    for (const font of parsed.fonts) {
-      const existing =
-        mode === "merge" ? await db.fonts.get(font.id) : undefined;
-      if (existing !== undefined) continue;
-      await db.fonts.put({
-        id: font.id,
-        family: font.family,
-        format: font.format,
-        blob: new Blob([font.data.buffer as ArrayBuffer], {
-          type: fontMime(font.format),
-        }),
-        addedAt: Date.now(),
-      });
-      report.fontsRestored += 1;
-    }
-  });
+      for (const doc of parsed.docs) {
+        const record: DocRecord = {
+          id: doc.id,
+          title: doc.title,
+          titleFont: doc.titleFont,
+          content: (doc.content ?? { type: "doc" }) as DocRecord["content"],
+          wordCount: doc.wordCount,
+          createdAt: doc.createdAt,
+          updatedAt: doc.updatedAt,
+        };
+        if (mode === "merge") {
+          const existing = await db.docs.get(doc.id);
+          if (existing !== undefined && existing.updatedAt >= doc.updatedAt) {
+            report.docsSkippedNewer += 1;
+            continue;
+          }
+        }
+        await db.docs.put(record);
+        await db.docMeta.put({
+          id: record.id,
+          title: record.title,
+          titleFont: record.titleFont,
+          wordCount: record.wordCount,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        });
+        report.docsRestored += 1;
+      }
 
-  await db.transaction("rw", db.images, async () => {
-    for (const image of parsed.images) {
-      const existing =
-        mode === "merge" ? await db.images.get(image.id) : undefined;
-      if (existing !== undefined) continue;
-      await db.images.put({
-        id: image.id,
-        docId: image.docId,
-        blob: new Blob([image.data.buffer as ArrayBuffer], {
-          type: image.mime,
-        }),
-        mime: image.mime,
-      });
-      report.imagesRestored += 1;
-    }
-  });
+      for (const font of parsed.fonts) {
+        const existing =
+          mode === "merge" ? await db.fonts.get(font.id) : undefined;
+        if (existing !== undefined) continue;
+        await db.fonts.put({
+          id: font.id,
+          family: font.family,
+          format: font.format,
+          blob: new Blob([font.data.buffer as ArrayBuffer], {
+            type: fontMime(font.format),
+          }),
+          addedAt: Date.now(),
+        });
+        report.fontsRestored += 1;
+      }
 
-  await db.transaction("rw", db.settings, async () => {
-    for (const setting of parsed.settings) {
-      await db.settings.put({ key: setting.key, value: setting.value });
-      report.settingsRestored += 1;
-    }
-  });
+      for (const image of parsed.images) {
+        const existing =
+          mode === "merge" ? await db.images.get(image.id) : undefined;
+        if (existing !== undefined) continue;
+        await db.images.put({
+          id: image.id,
+          docId: image.docId,
+          blob: new Blob([image.data.buffer as ArrayBuffer], {
+            type: image.mime,
+          }),
+          mime: image.mime,
+        });
+        report.imagesRestored += 1;
+      }
 
-  if (parsed.snapshots.length > 0) {
-    await db.transaction("rw", db.snapshots, async () => {
-      const rows: SnapshotRecord[] = parsed.snapshots.map((s) => ({
-        docId: s.docId,
-        content: (s.content ?? { type: "doc" }) as SnapshotRecord["content"],
-        savedAt: s.savedAt,
-      }));
-      await db.snapshots.bulkAdd(rows);
-      report.snapshotsRestored = rows.length;
-    });
-  }
+      for (const setting of parsed.settings) {
+        await db.settings.put({ key: setting.key, value: setting.value });
+        report.settingsRestored += 1;
+      }
 
+      if (parsed.snapshots.length > 0) {
+        const rows: SnapshotRecord[] = parsed.snapshots.map((s) => ({
+          docId: s.docId,
+          content: (s.content ?? { type: "doc" }) as SnapshotRecord["content"],
+          savedAt: s.savedAt,
+        }));
+        await db.snapshots.bulkAdd(rows);
+        report.snapshotsRestored = rows.length;
+      }
+    },
+  );
+
+  return report;
+}
+
+/**
+ * Restores a validated backup: parse + validate (no writes), automatic
+ * pre-restore backup (delivered through the hook BEFORE any wipe), then a
+ * single atomic write transaction.
+ */
+export async function restoreBackup(
+  blob: Blob,
+  mode: RestoreMode = "merge",
+  db: EditorDatabase = getDb(),
+  hooks: RestoreHooks = {},
+): Promise<{ report: RestoreReport; preRestoreBackup: Blob }> {
+  const parsed = await parseBackup(blob);
+  const preRestoreBackup = await createBackup({ includeSnapshots: true }, db);
+  await hooks.onPreRestoreBackup?.(preRestoreBackup);
+  const report = await writeParsedBackup(parsed, mode, db);
   return { report, preRestoreBackup };
 }

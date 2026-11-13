@@ -12,6 +12,21 @@ export interface DocRecord {
   updatedAt: number;
 }
 
+/**
+ * Lightweight projection of a docs row WITHOUT the editor JSON. The document
+ * list (re-read on every autosave) queries this table only, so saves never
+ * load full document content back into memory. Every docs write updates the
+ * matching row in the same transaction, so the two can never diverge.
+ */
+export interface DocMetaRecord {
+  id: string;
+  title: string;
+  titleFont: string | null;
+  wordCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface SnapshotRecord {
   id?: number;
   docId: string;

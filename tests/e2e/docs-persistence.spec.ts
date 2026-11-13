@@ -37,6 +37,13 @@ test("killed mid-typing loses at most the debounce window", async ({
   // flush saves the second chunk on a best-effort basis, but unload timing
   // makes that racy by nature, so it is not asserted).
   await page.keyboard.type("first chunk");
+  // The idle label already reads "Saved": wait for the schedule to flip it
+  // to dirty first, otherwise the Saved wait below passes vacuously and the
+  // reload can win the race against the write under parallel load.
+  await expect(page.getByTestId("save-status")).toContainText(
+    /Unsaved|Saving/,
+    { timeout: 5000 },
+  );
   await expect(page.getByTestId("save-status")).toContainText(/Saved/, {
     timeout: 5000,
   });
@@ -55,14 +62,14 @@ test("doc list creates, renames, duplicates, searches and deletes", async ({
   await expect(editor).toBeVisible();
 
   await page.getByRole("button", { name: "Documents" }).click();
-  let sheet = page.locator("dialog[open]");
+  let sheet = page.getByRole("dialog");
   await expect(sheet).toContainText("Documents");
 
   // Create opens the new doc and closes the sheet; reopen to manage it.
   await sheet.getByRole("button", { name: "New document" }).click();
   await expect(sheet).toBeHidden();
   await page.getByRole("button", { name: "Documents" }).click();
-  sheet = page.locator("dialog[open]");
+  sheet = page.getByRole("dialog");
   await expect(
     sheet.getByRole("button", { name: /Open Untitled/ }),
   ).toHaveCount(2);

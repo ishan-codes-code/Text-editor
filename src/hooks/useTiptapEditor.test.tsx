@@ -1,5 +1,6 @@
+import { cleanup, render } from "@testing-library/react";
 import type { Editor } from "@tiptap/core";
-import { render } from "preact";
+import { EditorContent } from "@tiptap/react";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useTiptapEditor } from "./useTiptapEditor";
@@ -11,37 +12,52 @@ function Harness({
   onEditor: (editor: Editor | null) => void;
   content?: string;
 }) {
-  const { mountRef, editor } = useTiptapEditor({ initialContent: content });
+  const { editor } = useTiptapEditor({ initialContent: content });
   useEffect(() => {
     onEditor(editor);
   }, [editor, onEditor]);
-  return <div ref={mountRef} />;
+  return <EditorContent editor={editor} />;
+}
+
+/**
+ * Table extensions load lazily, so the hook briefly mounts a base instance
+ * and then recreates it with the full set. Tests target the final instance,
+ * identified by the table nodes only it carries.
+ */
+async function waitForFinalEditor(
+  seen: readonly (Editor | null | undefined)[],
+): Promise<Editor> {
+  let finalEditor: Editor | null = null;
+  await vi.waitFor(() => {
+    const last = seen.at(-1);
+    expect(last?.schema.nodes.table).not.toBeUndefined();
+    finalEditor = last ?? null;
+  });
+  if (finalEditor === null) throw new Error("editor never settled");
+  return finalEditor;
 }
 
 describe("useTiptapEditor", () => {
   afterEach(() => {
+    cleanup();
     document.body.innerHTML = "";
   });
 
   it("mounts the full editor and destroys it on unmount", async () => {
     const seen: (Editor | null)[] = [];
-    const container = document.createElement("div");
-    document.body.append(container);
-    render(<Harness onEditor={(editor) => seen.push(editor)} />, container);
+    const { unmount } = render(
+      <Harness onEditor={(editor) => seen.push(editor)} />,
+    );
 
-    await vi.waitFor(() => {
-      expect(seen.at(-1)).not.toBeNull();
-    });
-    const editor = seen.at(-1);
-    expect(editor).not.toBeNull();
-    if (editor === null || editor === undefined) return;
-
+    const editor = await waitForFinalEditor(seen);
     expect(editor.isDestroyed).toBe(false);
     expect(editor.schema.nodes.doc).not.toBeUndefined();
     expect(editor.schema.nodes.pageBreak).not.toBeUndefined();
     expect(editor.commands.indent).toBeDefined();
 
-    const editable = container.querySelector('.tiptap[contenteditable="true"]');
+    const editable = document.body.querySelector(
+      '.tiptap[contenteditable="true"]',
+    );
     expect(editable?.getAttribute("spellcheck")).toBe("false");
     expect(editable?.getAttribute("autocorrect")).toBe("off");
     expect(editable?.getAttribute("autocapitalize")).toBe("none");
@@ -49,27 +65,23 @@ describe("useTiptapEditor", () => {
     editor.commands.setContent("<p>hello</p>");
     expect(editor.getText()).toBe("hello");
 
-    render(null, container);
-    expect(editor.isDestroyed).toBe(true);
+    unmount();
+    // @tiptap/react schedules destruction on the next tick (StrictMode-safe),
+    // so the assertion must poll rather than read synchronously.
+    await vi.waitFor(() => {
+      expect(editor.isDestroyed).toBe(true);
+    });
   });
 
   it("seeds initial content", async () => {
-    let resolveEditor: (editor: Editor) => void = () => undefined;
-    const editorPromise = new Promise<Editor>((resolve) => {
-      resolveEditor = resolve;
-    });
-    const container = document.createElement("div");
-    document.body.append(container);
+    const seen: (Editor | null)[] = [];
     render(
       <Harness
         content="<p>seeded</p>"
-        onEditor={(editor) => {
-          if (editor !== null) resolveEditor(editor);
-        }}
+        onEditor={(editor) => seen.push(editor)}
       />,
-      container,
     );
-    const mounted = await editorPromise;
+    const mounted = await waitForFinalEditor(seen);
     expect(mounted.getText()).toBe("seeded");
   });
 });

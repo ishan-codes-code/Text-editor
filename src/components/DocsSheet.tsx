@@ -1,50 +1,60 @@
-import type { DocListItem } from "../storage/documents";
+import { useMemo, useState } from "react";
+import { type DocListItem, renameDoc } from "../storage/documents";
 import { DocList } from "./DocList";
-import { Button } from "./ui/button";
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "./ui/sheet";
 
-export interface DocsSheetProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+export interface DocsPanelProps {
   docs: DocListItem[];
   activeId: string | null;
-  query: string;
-  onQueryChange: (query: string) => void;
   onOpen: (id: string) => void;
   onNew: () => void;
-  onRename: (id: string, title: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Refreshes app-level lists (header title) after mutations. */
+  onChanged: () => void;
 }
 
-/** Lazy-loaded (see App): keeps Radix out of the core chunk. */
-export function DocsSheet(props: DocsSheetProps) {
-  const { open, onOpenChange, ...listProps } = props;
+/** Content-only panel: the overlay manager provides the sheet shell. */
+export function DocsPanel({
+  docs,
+  activeId,
+  onOpen,
+  onNew,
+  onDuplicate,
+  onDelete,
+  onChanged,
+}: DocsPanelProps) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const visible = useMemo(
+    () =>
+      needle === ""
+        ? docs
+        : docs.filter((doc) => doc.title.toLowerCase().includes(needle)),
+    [docs, needle],
+  );
+  // Boot always ensures at least one document, so an empty list only ever
+  // means the first load has not landed yet.
+  if (docs.length === 0) {
+    return (
+      <p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
+    );
+  }
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="left">
-        <SheetHeader>
-          <SheetTitle>Documents</SheetTitle>
-          <SheetDescription>
-            Create, open, rename, duplicate, delete and search.
-          </SheetDescription>
-        </SheetHeader>
-        <div className="mt-4">
-          <DocList {...listProps} />
-        </div>
-        <div className="mt-4 flex justify-end">
-          <SheetClose>
-            <Button variant="outline">Close</Button>
-          </SheetClose>
-        </div>
-      </SheetContent>
-    </Sheet>
+    <DocList
+      docs={visible}
+      activeId={activeId}
+      query={query}
+      onQueryChange={setQuery}
+      onOpen={onOpen}
+      onNew={() => void onNew()}
+      onRename={(id, title) => {
+        void (async () => {
+          await renameDoc(id, title);
+          onChanged();
+        })();
+      }}
+      onDuplicate={(id) => void onDuplicate(id)}
+      onDelete={(id) => void onDelete(id)}
+    />
   );
 }

@@ -1,5 +1,5 @@
-import preact from "@preact/preset-vite";
 import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { defineConfig } from "vitest/config";
 
@@ -10,7 +10,7 @@ export default defineConfig({
   // and custom domains alike. Revisit in phase 1 alongside the SW scope.
   base: "./",
   plugins: [
-    preact(),
+    react(),
     tailwindcss(),
     VitePWA({
       // Prompt mode per TRD: the app shows "Update available" and applies it
@@ -90,10 +90,8 @@ export default defineConfig({
     port: 5173,
   },
   resolve: {
-    // shadcn/ui is written for React; it runs on Preact through compat.
     alias: {
-      react: "preact/compat",
-      "react-dom": "preact/compat",
+      "@": new URL("./src", import.meta.url).pathname,
     },
   },
   test: {

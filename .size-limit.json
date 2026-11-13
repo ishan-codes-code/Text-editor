@@ -1,8 +1,8 @@
 [
   {
-    "name": "core JS (TRD budget: lazy export/import/table chunks excluded, precached)",
+    "name": "core JS (TRD budget: lazy export/import/table/overlay chunks excluded, precached)",
     "path": "dist/assets/entry-*.js",
-    "limit": "300 kB",
+    "limit": "450 kB",
     "running": false
   }
 ]
